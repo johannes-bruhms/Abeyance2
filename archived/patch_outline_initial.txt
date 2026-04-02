@@ -1,0 +1,69 @@
+ABEYANCE2 MAX MSP PATCH INITIAL SKETCH
+
+---------- FULL ABEYANCE PROTOCOL CASE STUDY 2 PATCH ----------
+---------- MIDI Feedback Filter + MuBu HHMM + Buffer + Rev/Drop Timeline ----------
+
+[midiin]
+[notein]
+[unpack f f]
+[js feedback_filter]                      // ← JS 1 below
+
+[trigger bang bang]
+[delta]
+[last 0]
+[- ]
+[pack f f f f]                            // pitch vel IOI interval
+
+[mubu.record hhmm-help data @prefdef yes @samplerate 100 @matrixcols 4 @maxsize 1000 @bounds -3. 3. shape envelope colormode rainbow]
+
+// TRAINING BUTTONS
+[button] "RECORD a (octaves)"     → [message record 1] to mubu.record
+[button] "RECORD b (small clusters)" → [message record 2]
+[button] "RECORD c (large clusters)" → [message record 3]
+[button] "RECORD d (scalar)"      → [message record 4]
+[button] "RECORD e (outlier)"     → [message record 5]
+[button] "RECORD f (pedal)"       → [message record 6]
+[button] "RECORD g (silence)"     → [message record 7]
+
+[button] "TRAIN MODELS" → [message train] → [mubu.hhmm hhmm-help data @regularization 0.05 0.01 @play 1]
+
+[gate 2 1]                                // 0=training, 1=live
+[pack f f f f] outlet → gate inlet 0
+[pack f f f f] outlet → gate inlet 1 → [mubu.hhmm hhmm-help data @regularization 0.05 0.01 @play 1]
+
+[mubu.hhmm] outlet 4                      // label 1-7
+[route 1 2 3 4 5 6 7]
+├── [message a] 
+├── [message b] 
+├── [message c] 
+├── [message d] 
+├── [message e] 
+├── [message f] 
+└── [message g] 
+
+[js abeyance_buffer]                      // ← JS 2 below
+[metro 100] → [bang] → js abeyance_buffer
+
+[js abeyance_buffer] outlet
+[unpack f f f f f f f f f f]
+[select 1 2 3 4 5 6 7+]
+[route single overload]
+
+// Inverse Sawtooth Timeline
+[metro 1000]
+[counter 0 179]
+[expr ($i1 % 60)]
+[expr if($i1<60, 60-floor($i1/20), if($i1<120, 30-floor(($i1-60)/20), 15-floor(($i1-120)/20)) ) ]  // Rev length
+[expr if($i1<60, 15+floor($i1/20), if($i1<120, 30+floor(($i1-60)/20), 45+floor(($i1-120)/20)) ) ]  // Drop length
+[sel Rev Drop]
+[gate 2]                                  // 0=Rev (overload), 1=Drop (safety)
+
+[gate 2] outlet 0 → [message aggressive]  // connect your FX here
+[gate 2] outlet 1 → [message safety]
+
+[noteout 16]
+
+// Auto silence
+[metro 100]
+[delay 800]
+[message g] → js abeyance_buffer

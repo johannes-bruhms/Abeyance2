@@ -1,0 +1,93 @@
+ABEYANCE PROTOCOL CASE STUDY 2
+Date: 25 March 2026
+
+Comprehensive Implications and Significance of Abeyance Protocol – Case Study 2
+The Abeyance Protocol – Case Study 2 represents a tightly integrated, real-time interactive computer-music interface (CMI) that fuses advanced machine-listening with acoustic piano performance on a Disklavier, mediated through a custom Python architecture. By deriving gestural metrics through a 6D Hybrid Additive-Gestalt feature extractor, filtering MIDI feedback loops, and classifying note-class events (a–g) using Dynamic Time Warping (DTW), the system creates a closed-loop ecology in which the performer’s physical dynamics both influence and are shaped by an autonomous “Parasite Swarm” AI. This is not passive accompaniment; it is an active, ecological protocol that operationalizes “abeyance” as a compositional principle—suspending, echoing, or transforming gestural material according to recognized musical motifs and the swarm’s internal energy states.
+
+Artistic Significance
+Within intermedia composition and performance practice, the project extends a lineage of interactive music systems by embedding AI-driven generative logic directly into the physical instrument rather than treating the piano as a separate MIDI controller. The Disklavier’s acoustic output becomes both input (via MIDI echo filtering) and output, while the AI swarm enforces a temporal “hold” logic that mirrors hypnagogic or flow-state phenomenology. The system turns gestural and temporal fluctuations into audible form, operating as a real-time modulator of generative rules, delay lines, and polyphonic density. The result is a new aesthetic category—human-AI acoustic improvisation—where the music is literally “in abeyance” until the algorithmic and gestural states permit release or transformation.
+
+Cognitive and Performance Implications
+The project contributes to the growing evidence base on human-computer entrainment in artistic performance. By computing real-time gestural vectors (density, polyphony, spread, variance, and velocity directionality), the system operationalizes a marker of musical complexity that directly correlates with the performer's cognitive and physical load. Deploying this in a live loop with real-time MIDI buffering offers a rare opportunity to collect longitudinal, performance-embedded datasets that can test causal links between physical execution and emergent musical structures. Adjacent fields stand to benefit:
+
+Music cognition and entrainment research: Recent work shows live performance strengthens acoustic coherence and flow states. The Abeyance Protocol supplies performer-to-AI-to-audience acoustic coupling, potentially enabling deeper physiological telemetry to close a larger social loop.
+
+Peak-performance training: The system creates a highly responsive feedback loop, demanding deep listening and rapid adaptation from the performer, which can reliably induce and sustain flow states.
+
+Accessibility: Although designed for an able-bodied pianist, the gesture-agnostic tracking architecture is directly transferable to customized input mechanisms, offering a pathway from artistic research to accessible interactive music systems.
+
+Psychoacoustic Implications
+The Abeyance Protocol operates at the intersection of real-time machine listening and acoustic output on a physical Disklavier, creating a closed-loop system in which gestural metrics directly govern the temporal suspension, echoing, or transformation of performed material. This architecture has direct relevance to psychoacoustics—the scientific study of sound perception, auditory grouping, and scene analysis—because the swarm's generative rules actively manipulate the temporal microstructure of the piano sound in ways that can probe fundamental perceptual mechanisms.
+
+Auditory scene analysis describes how the auditory system parses complex sound streams into coherent sources through principles such as temporal proximity, similarity, and common fate. In the protocol, the DTW classifier recognizes specific note-class events (a–g) and feeds them to the Parasite Swarm, which dynamically controls delays or repetitions. When the swarm's energy is high, gestural material is held in suspension or layered; when it drops, the buffer releases transformed echoes or inversions. This produces systematic variations in inter-onset intervals (IOI), simultaneity cues, and spectral overlap. The result is a live, performer-driven manipulation of psychoacoustic affordances: dense swarm states may induce perceptual “fragmentation” or “layering,” while sparse recovery phases restore perceptual fusion.
+
+The Disklavier’s acoustic (not synthesized) output ensures that all perceptual cues remain fully embodied and unmediated by loudspeakers, allowing direct investigation of how AI-induced temporal “holds” affect auditory stream segregation in both the player and audience members. Because the protocol re-injects MIDI events into the physical instrument, overlapping releases or delayed pedal (element f) actions generate subtle beating, comb-filtering, or resonance shifts inside the piano body.
+
+Trance Induction Implications
+The protocol’s core loop—the recognition of specific gestural gestalts (a-g) and the autonomous response of the Parasite Swarm—maps onto the phenomenology of trance, hypnagogia, and flow states. Because the system is closed-loop, it creates a bidirectional feedback pathway capable of self-reinforcing trance induction. When musical density rises, the swarm absorbs the input and holds gestures in suspension, reducing immediate motor and auditory demands; this momentary “hold” allows the performer to fall into a state of deep listening. Conversely, when the swarm releases buffered material, it floods the auditory scene with rich, transformed echoes—potentially triggering the “chill response” or strong emotional entrainment documented in music-cognition studies.
+
+The acoustic nature of the Disklavier ensures that these auditory events retain full spectral richness and spatial embedding within the performance space, factors known to amplify trance-like absorption more effectively than electronic synthesis. Live performance already strengthens physiological entrainment compared with recorded playback; the protocol supplies an additional layer in which the machine's algorithmic "trance dynamics" become audible structural operators.
+
+Technological and Methodological Contributions
+The transition to a purely Python-based architecture utilizing FastDTW, Tkinter, and custom routing pipelines demonstrates a lightweight, replicable pipeline that avoids proprietary hardware lock-in. The custom GhostNoteFilter solves a persistent practical problem in Disklavier-based live electronics (infinite MIDI feedback loops), while the 6D extract_micro_gestalt function provides a compact, low-latency representation of gestural density without exhaustive, CPU-heavy MIDI parsing. These components lower the barrier for other intermedia artists and researchers to replicate or extend the protocol.
+
+Broader Societal and Ethical Implications
+Embodied cognition in the arts: By making the performer's physical tendencies structurally generative via AI interpretation, the project foregrounds the human-machine assemblage as a co-creator, challenging Romantic notions of autonomous artistic genius.
+
+Audience experience: The interplay between human and swarm can generate shared aesthetic empathy—extending findings that live interactive performance elicits stronger emotional engagement than static recordings.
+
+Future trajectories: The protocol exports standardized Python/MIDI logs for offline machine-learning analysis of performer–instrument coupling, feeding back into both artistic practice and interactive design models.
+
+Future Considerations: EEG Integration (Brain-Computer Music Interface)
+While currently driven by gestural and algorithmic metrics, the Abeyance Protocol is theoretically primed to integrate EEG-derived cognitive-state metrics, transforming it into a true BCMI (Brain-Computer Music Interface).
+
+By utilizing BrainFlow and OSC, a future iteration could derive an “overload” parameter from the frontal-theta to parietal-alpha power ratio. Frontal theta is classically associated with cognitive control and creative ideation, while parietal alpha correlates with relaxed attentional gating. Elevating the theta/alpha ratio reliably induces hypnagogic phenomenology and enhances artistic performance (Gruzelier, 2009).
+
+Integrating this would allow the overload parameter to function as an on-stage “trance gate.” Rather than the Parasite Swarm reacting solely to musical input, the performer’s momentary brain dynamics would explicitly dictate the suspension, echoing, or transformation of gestural material. This would yield a novel experimental platform for real-time neurofeedback, moving it from the clinical training room to the concert hall, and allowing causal analysis of perception-cognition coupling during live performance.
+
+---------- FULL ABEYANCE PROTOCOL CASE STUDY 2 ARCHITECTURE ----------
+---------- Python DTW + Parasite Swarm Integration ----------
+Core Principles:
+
+7-Element Taxonomy: (a=Linear Velocity, b=Vertical Density, c=Spatial Leaps, d=Oscillation, e=Sweeps, f=Resonance/Pedal, g=Pointillism/Void)
+
+Sliding Temporal Window: 250ms frame squashing into a 6D mathematical vector.
+
+Hybrid Gestalt-DTW: Time-series sequence matching for motif recognition.
+
+Parasite Swarm AI: Energy-based agent logic that consumes recognized elements and excretes scheduled MIDI playback.
+
+Hardware Safe-Guarding: 3.0-second Ghost Note Time-To-Live (TTL) filter to prevent infinite Disklavier echo loops.
+
+Main Signal Flow:
+[Disklavier MIDI In] → [GhostNoteFilter] → [250ms Frame Buffer] → [6D Gestalt Extractor] → [FastDTW Classifier] → [Parasite Swarm Stomach] → [Playback Engine] → [Disklavier MIDI Out]
+
+File Structure & Modularity:
+
+main.py: The application loop. Handles Tkinter threading, real-time MIDI listener events, polyphony calculations (timestamping), and strict 250ms time.perf_counter() loop enforcement.
+
+core/config.py: Global settings (frame size, DTW search radius, agent tick speeds, swarm energy decay).
+
+core/gestalt.py: The mathematical core. Squashes raw (pitch, time) tuples into a normalized 6D array: [Density, Polyphony, Spread, Variance, Up_Velocity, Down_Velocity].
+
+ml/classifier.py: Implementation of HybridGestaltDTW. Maintains an 8-frame (2.0 second) rolling deque of 6D vectors. Matches live sequences against stored taxonomy templates. Includes a 1.5s cooldown debounce to prevent rapid-fire misfires.
+
+ml/forge.py: Synthetic bootstrapping. Generates mathematically distinct but structurally similar matrices via Gaussian noise to populate DTW templates, preventing overfitting.
+
+agents/parasite.py: AI Swarm logic. Evaluates on an independent tick rate. Modulates energy based on feeding (classified motifs) and handles generative response scheduling.
+
+midi/io.py: Connects to physical ports via mido. Houses the vital GhostNoteFilter, which logs AI-generated notes into a dictionary and suppresses them from the input stream, distinguishing human from machine. Routes CC 64 (Pedal) directly to the Swarm.
+
+midi/playback.py: Scheduled threading for generative output, ensuring AI notes have distinct durations and non-blocking note_off executions.
+
+gui/app.py & gui/piano_roll.py: Lightweight Tkinter visualizers for logging state changes, DTW recognition events, and a scrolling piano roll identifying human vs. AI notes.
+
+Design Notes & Architectural Considerations:
+
+Vector Normalization: Extracted 6D vectors are normalized inherently within gestalt.py (0.0 to ~1.0). No secondary sklearn.preprocessing or scaling layer is required.
+
+Polyphonic Interpretation: True MIDI simultaneity is calculated by measuring instances where delta times between chronological notes fall below 15ms.
+
+Pedal Hardware Override: Element f (Resonance) bypasses DTW classification entirely. CC 64 values > 63 are routed instantly to the swarm state, preserving zero-latency hardware feel.
+
+Early Abandon Optimization: The DTW loop incorporates an early abandon breakout if the Euclidean distance drops below 0.5, heavily saving CPU in real-time execution.
