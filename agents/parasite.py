@@ -2,7 +2,7 @@
 import time
 import threading
 from collections import deque
-from core.config import CONFIG
+from core.config import CONFIG, ELEMENT_PARAMS
 
 class ParasiteSwarm:
     def __init__(self, elements, playback_engine):
@@ -31,13 +31,15 @@ class ParasiteSwarm:
             else:
                 self.agents['f']['energy'] = 0.0
 
-    def feed(self, label, notes):
+    def feed(self, label, notes, weight=1.0):
+        """Energize one agent. weight (0.0–1.0) scales the energy boost by detection confidence."""
         if not label or label not in self.agents or label == 'f': return
         with self.lock:
             # Element G requires less energy to trigger, as the notes are sparse
-            boost = CONFIG['energy_boost'] * 1.5 if label == 'g' else CONFIG['energy_boost']
-            self.agents[label]['energy'] = min(1.0, self.agents[label]['energy'] + boost)
-            self.agents[label]['stomach'].extend(notes) # Notes are just raw pitches here
+            boost_val = ELEMENT_PARAMS[label]['energy_boost']
+            base_boost = boost_val * 1.5 if label == 'g' else boost_val
+            self.agents[label]['energy'] = min(1.0, self.agents[label]['energy'] + base_boost * weight)
+            self.agents[label]['stomach'].extend(notes)
 
     def _swarm_loop(self):
         tick_sec = CONFIG['agent_tick_ms'] / 1000.0
@@ -48,7 +50,7 @@ class ParasiteSwarm:
                 for label, agent in self.agents.items():
                     if label == 'f': continue 
                     
-                    agent['energy'] = max(0.0, agent['energy'] - CONFIG['energy_decay'])
+                    agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label]['energy_decay'])
                     
                     if agent['energy'] > 0.6 and len(agent['stomach']) > 0:
                         self._trigger_attack(label, agent)

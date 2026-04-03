@@ -2,7 +2,8 @@
 import tkinter as tk
 import threading
 import time
-from core.config import CONFIG, ELEMENTS
+from core.config import CONFIG, ELEMENTS, ELEMENT_PARAMS
+from core.gestalt import extract_micro_gestalt
 from midi.io import MidiIO, GhostNoteFilter
 from midi.playback import PlaybackEngine
 from ml.classifier import HybridGestaltDTW
@@ -12,34 +13,65 @@ from gui.app import AbeyanceGUI
 class AbeyanceApp:
     def __init__(self):
         self.root = tk.Tk()
-        
-        self.dtw = HybridGestaltDTW()
+
+        self.dtw          = HybridGestaltDTW()
         self.ghost_filter = GhostNoteFilter(CONFIG['ghost_echo_ttl'])
-        
-        self.midi_io = None
+
+        self.midi_io  = None
         self.playback = None
-        self.swarm = None
-        
+        self.swarm    = None
+
         self.current_frame_notes = []
-        self.lock = threading.Lock()
+        self.lock             = threading.Lock()
         self.analysis_running = False
+
+        # Recording state
+        self.recording           = False
+        self.recording_element        = None
+        self.recording_frames         = []
+        self.recording_raw_notes      = []   # (pitch, timestamp) events during recording
+        self.recording_raw_durations  = []   # (timestamp_of_noteoff, duration) during recording
+        self.recording_start_t        = 0.0
+
+        # Note-duration tracking for articulation feature
+        # pitch → note-on timestamp (for in-flight notes)
+        self.note_on_times        = {}
+        self.completed_durations  = []  # durations collected this frame
+
+        self.current_frame_id = 0
+
+        # Session log for post-performance analysis
+        self.session_log   = []
+        self.session_start = 0.0
 
         # Init GUI last, passing self to act as the controller
         self.gui = AbeyanceGUI(self.root, self)
 
+    # ------------------------------------------------------------------ MIDI
+
     def connect_midi(self, in_port_name, out_port_name):
-        """Called by the GUI to establish the hardware connection."""
         try:
-            self.midi_io = MidiIO(in_port_name, out_port_name, self.ghost_filter, self._on_midi_in, self._on_cc_in)
+            self.midi_io = MidiIO(
+                in_port_name, out_port_name, self.ghost_filter,
+                self._on_midi_in, self._on_cc_in,
+                note_off_callback=self._on_midi_note_off,
+            )
             self.playback = PlaybackEngine(self.midi_io)
-            
-            # Hook the playback engine to feed AI notes back into the GUI Piano Roll
+
+            # Hook: route AI note visuals with correct timing and duration
             original_schedule = self.playback.schedule_note
             def hooked_schedule(note, velocity, duration_sec, delay_sec=0.0):
-                self.gui.add_note_visual(note, velocity, is_ai=True)
+                delay_ms = int(delay_sec * 1000)
+                dur_ms   = int(duration_sec * 1000)
+                self.root.after(delay_ms,
+                                self.gui.piano_roll.draw_note,
+                                note, velocity, True, None)
+                self.root.after(delay_ms + dur_ms,
+                                self.gui.piano_roll.release_note,
+                                note, True)
                 original_schedule(note, velocity, duration_sec, delay_sec)
             self.playback.schedule_note = hooked_schedule
-            
+
             self.swarm = ParasiteSwarm(ELEMENTS, self.playback)
             return True
         except Exception as e:
@@ -47,52 +79,178 @@ class AbeyanceApp:
             return False
 
     def _on_midi_in(self, note, velocity):
-        # Log to GUI
-        self.gui.add_note_visual(note, velocity, is_ai=False)
-        # Add tuple of (pitch, timestamp) for Polyphony calculations
+        now = time.perf_counter()
+        self.gui.add_note_visual(note, velocity, is_ai=False,
+                                 frame_id=self.current_frame_id)
         with self.lock:
-            self.current_frame_notes.append((note, time.perf_counter()))
-            
+            self.current_frame_notes.append((note, now))
+            self.note_on_times[note] = now
+            if self.recording:
+                self.recording_raw_notes.append((note, now))
+
+    def _on_midi_note_off(self, note):
+        now = time.perf_counter()
+        self.gui.release_note_visual(note)
+        with self.lock:
+            if note in self.note_on_times:
+                duration = now - self.note_on_times.pop(note)
+                self.completed_durations.append(duration)
+                if self.recording:
+                    self.recording_raw_durations.append((now, duration))
+
     def _on_cc_in(self, value):
-        # Route CC 64 (Pedal) directly to swarm logic
         is_down = value > 63
         if self.swarm:
             self.swarm.set_pedal(is_down)
 
+    # --------------------------------------------------------------- analysis
+
     def start_analysis(self):
         if not self.analysis_running and self.midi_io:
             self.analysis_running = True
+            self.session_log   = []
+            self.session_start = time.perf_counter()
+            # Flush any notes that accumulated before analysis started so they
+            # don't collapse into frame 0 and poison the EMA for seconds.
+            with self.lock:
+                self.current_frame_notes = []
+                self.completed_durations = []
             threading.Thread(target=self._analysis_loop, daemon=True).start()
-            self.gui.status_var.set("Analysis Running")
+
+    def stop_analysis(self):
+        self.analysis_running = False
+        self._save_session_log()
+
+    def _save_session_log(self):
+        if not self.session_log:
+            return
+        import json, datetime
+        ts   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        path = f'session_{ts}.json'
+        try:
+            with open(path, 'w') as f:
+                json.dump(self.session_log, f, indent=2)
+            self.gui.log_msg(f'[LOG] Session saved → {path}  ({len(self.session_log)} frames)')
+            self.root.after(0, self.gui.status_var.set, f'Saved: {path}')
+        except Exception as e:
+            self.gui.log_msg(f'[ERR] Could not save session log: {e}')
+        self.session_log = []
 
     def _analysis_loop(self):
-        # Fetch dynamically from CONFIG in case user adjusted slider
         while self.analysis_running:
-            frame_sec = CONFIG['frame_size_ms'] / 1000.0
+            frame_sec  = CONFIG['frame_size_ms'] / 1000.0
             start_time = time.perf_counter()
-            
+
+            frame_id = self.current_frame_id
+            self.current_frame_id += 1
+
             with self.lock:
-                notes_to_process = list(self.current_frame_notes)
-                self.current_frame_notes = [] 
-                
-            # Feed raw tuples into the DTW (which uses extract_micro_gestalt)
-            self.dtw.push_frame(notes_to_process)
-            
-            detected_motif = self.dtw.classify_current()
-            if detected_motif:
-                # Strip timestamps out before feeding the agent stomachs
+                notes_to_process    = list(self.current_frame_notes)
+                durations_this_frame = list(self.completed_durations)
+                self.current_frame_notes   = []
+                self.completed_durations   = []
+
+            # 7D gestalt vector — articulation now included via completed durations
+            vector_7d = extract_micro_gestalt(notes_to_process, durations_this_frame)
+            self.dtw.push_frame(vector_7d)
+
+            if self.recording:
+                self.recording_frames.append(vector_7d)
+
+            scores = self.dtw.score_all()
+
+            # Log every frame for post-performance analysis
+            t_rel = round(time.perf_counter() - self.session_start, 3)
+            self.session_log.append({
+                't':      t_rel,
+                'frame':  frame_id,
+                'scores': {k: round(v, 3) for k, v in scores.items()},
+                'notes':  [n[0] for n in notes_to_process],
+            })
+            self.root.after(0, self.gui.push_timeline, scores)
+
+            active = {lbl: c for lbl, c in scores.items()
+                      if c >= ELEMENT_PARAMS[lbl]['affinity_threshold']}
+
+            self.gui.resolve_frame_visual(frame_id, active)
+
+            if active:
                 raw_pitches = [n[0] for n in notes_to_process]
                 if self.swarm:
-                    self.swarm.feed(detected_motif, raw_pitches)
-                
-                status_msg = f"Gestalt: {ELEMENTS[detected_motif]}"
+                    for label, confidence in active.items():
+                        self.swarm.feed(label, raw_pitches, weight=confidence)
+
+                sorted_active = sorted(active.items(), key=lambda x: x[1], reverse=True)
+                status_msg = '  '.join(f'{ELEMENTS[l]} {c:.2f}' for l, c in sorted_active)
                 print(status_msg)
                 self.gui.root.after(0, self.gui.status_var.set, status_msg)
 
-            # Enforce strict timeframe looping
-            elapsed = time.perf_counter() - start_time
-            sleep_time = max(0, frame_sec - elapsed)
-            time.sleep(sleep_time)
+            elapsed    = time.perf_counter() - start_time
+            time.sleep(max(0, frame_sec - elapsed))
+
+    # -------------------------------------------------------------- recording
+
+    def toggle_recording(self, element_id, variations=None, noise_spread=None):
+        """
+        Toggle human seed recording for element_id.
+        Returns True if recording just started, False if it just stopped.
+        variations / noise_spread override CONFIG defaults when forging.
+        """
+        if not self.recording:
+            self.recording                = True
+            self.recording_element        = element_id
+            self.recording_frames         = []
+            self.recording_raw_notes      = []
+            self.recording_raw_durations  = []
+            self.recording_start_t        = time.perf_counter()
+            self.gui.log_msg(f"[REC] Recording started for: {ELEMENTS[element_id]}")
+            return True
+        else:
+            self.recording = False
+            frames        = self.recording_frames
+            raw_notes     = self.recording_raw_notes
+            raw_durations = self.recording_raw_durations
+            target        = self.recording_element
+            self.recording_frames        = []
+            self.recording_raw_notes     = []
+            self.recording_raw_durations = []
+            self.recording_element       = None
+
+            n_vars   = int(variations)   if variations   is not None else CONFIG['variations']
+            n_spread = float(noise_spread) if noise_spread is not None else CONFIG['noise_spread']
+
+            # If analysis wasn't running, no gestalt frames were accumulated.
+            # Compute them inline from raw notes, chunked into frame_size_ms windows.
+            # Include durations for the articulation dimension.
+            if not frames and raw_notes:
+                frame_sec = CONFIG['frame_size_ms'] / 1000.0
+                t = raw_notes[0][1]
+                t_end = raw_notes[-1][1] + frame_sec
+                while t < t_end:
+                    chunk = [(p, ts) for p, ts in raw_notes if t <= ts < t + frame_sec]
+                    # Durations whose note-off timestamp falls within this frame window
+                    dur_chunk = [d for ts_off, d in raw_durations if t <= ts_off < t + frame_sec]
+                    frames.append(extract_micro_gestalt(chunk, dur_chunk))
+                    t += frame_sec
+
+            # Strip near-silent frames (density < 0.05 ≈ fewer than 2 notes per 250ms).
+            # Silence before/after/between gestures drags the centroid toward zero.
+            frames = [f for f in frames if float(f[0]) >= 0.05]
+
+            if frames:
+                frame_list = [v.tolist() for v in frames]
+                self.dtw.forge.add_human_seed(target, frame_list)
+                self.dtw.update_element(target, n_vars, n_spread)
+                total_seed_frames = len(self.dtw.forge.seeds.get(target, []))
+                self.gui.log_msg(
+                    f"[REC] +{len(frames)} frames → {ELEMENTS[target]} "
+                    f"(seed total: {total_seed_frames} frames)"
+                )
+                self.gui.update_training_ui(target, raw_notes, total_seed_frames, n_vars)
+            else:
+                self.gui.log_msg("[REC] No active frames captured — play more densely, or the whole recording was silence.")
+            return False
+
 
 if __name__ == "__main__":
     app = AbeyanceApp()

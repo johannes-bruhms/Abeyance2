@@ -24,10 +24,12 @@ class GhostNoteFilter:
         return msg
 
 class MidiIO:
-    def __init__(self, in_port_name, out_port_name, ghost_filter, note_callback, cc_callback):
+    def __init__(self, in_port_name, out_port_name, ghost_filter,
+                 note_callback, cc_callback, note_off_callback=None):
         self.ghost_filter = ghost_filter
         self.note_callback = note_callback
         self.cc_callback = cc_callback
+        self.note_off_callback = note_off_callback
         
         try:
             # Note: Update these names based on your Disklavier's actual port names if needed
@@ -46,8 +48,14 @@ class MidiIO:
             return
             
         filtered_msg = self.ghost_filter.filter_incoming(msg)
-        if filtered_msg and filtered_msg.type == 'note_on' and filtered_msg.velocity > 0:
+        if not filtered_msg:
+            return
+        is_note_off = (filtered_msg.type == 'note_off') or \
+                      (filtered_msg.type == 'note_on' and filtered_msg.velocity == 0)
+        if filtered_msg.type == 'note_on' and filtered_msg.velocity > 0:
             self.note_callback(filtered_msg.note, filtered_msg.velocity)
+        elif is_note_off and self.note_off_callback:
+            self.note_off_callback(filtered_msg.note)
 
     def send_note_on(self, note, velocity):
         if self.outport:

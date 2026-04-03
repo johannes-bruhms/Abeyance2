@@ -1,0 +1,177 @@
+ABEYANCE PROTOCOL II — PARAMETER REFERENCE
+===========================================
+
+
+DETECTION  (Affinity-based gesture classifier)
+-----------------------------------------------
+
+Affinity Threshold  [GUI slider, default: 0.35, range: 0.10–0.90]
+
+  Minimum confidence score required to activate an element and inject energy
+  into the Parasite Swarm. Scores are exponentially smoothed (EMA) across
+  frames, so a gesture must be sustained briefly before it crosses this line.
+
+  Lower  → more elements fire, faster response, risk of false positives in
+           dense or ambiguous textures.
+  Higher → only clear, well-matched gestures trigger a response. Better for
+           precise playing; can feel unresponsive if set above ~0.60.
+
+  Tip: start around 0.35 with default profiles, then raise to 0.45–0.55 after
+  recording human seeds, as trained centroids produce sharper scores.
+
+
+Affinity Sigma  [GUI slider, default: 0.22, range: 0.05–0.60]
+
+  Width of the Gaussian kernel used to convert feature-space distance into a
+  0–1 confidence score. Think of it as the tolerance radius around each
+  element's centroid.
+
+  Lower  → sharp discrimination; only playing that closely matches the seed
+           centroid scores highly. Elements rarely interfere with each other.
+  Higher → broader acceptance; a gesture that drifts from the profile still
+           scores well. More forgiving of loose or variable playing, but
+           neighbouring elements may bleed into each other.
+
+  Tip: if a trained element refuses to trigger despite correct playing, raise
+  sigma to 0.28–0.35 before re-recording. If unrelated elements keep firing
+  together, lower sigma toward 0.15.
+
+
+SWARM ENERGY
+------------
+
+Energy Boost  [GUI slider, default: 0.20, range: 0.10–1.00]
+
+  Energy added to an agent per detected frame, scaled by detection confidence
+  (a 0.9-confidence hit adds more energy than a 0.4-confidence one). Agents
+  fire a response when their energy exceeds 0.60, then drain by 0.30–0.60 per
+  response depending on the element.
+
+  Lower  → agents build up slowly; the swarm responds selectively and less
+           frequently. Suitable for sparse, meditative playing.
+  Higher → agents charge fast and fire repeatedly. Aggressive, dense AI output.
+           Can overwhelm the texture if set above ~0.50.
+
+
+Energy Decay  [GUI slider, default: 0.05, range: 0.01–0.10]
+
+  Energy drained from each agent per swarm tick (100ms). Acts as a forgetting
+  rate — how quickly a past gesture loses its influence on the swarm.
+
+  Lower  → energy persists; a single strong gesture can sustain the swarm
+           through a long silence. Creates slow momentum and sustained arcs.
+  Higher → agents reset quickly between phrases; each gesture is heard in
+           isolation, no carry-over. Good for highly rhythmic, segmented playing.
+
+  Note: Elements B (Vertical Density) and G (Pointillism) use a slow EMA alpha
+  internally, so they naturally sustain longer regardless of this setting.
+
+
+TRAINING  (per element, in the Training tab)
+--------------------------------------------
+
+Variations  [per-column slider, default: 100, range: 10–500]
+
+  Number of synthetic template copies forged from the recorded human seed using
+  Gaussian noise perturbation. The classifier compares live playing against the
+  mean (centroid) of all variations.
+
+  Lower  → centroid stays closer to the exact seed recording; tight match
+           required. Good if you play consistently.
+  Higher → centroid is averaged over a broader synthetic distribution, more
+           robust to natural variation in performance. 100–200 is practical.
+           Above 300 adds marginal benefit with noticeable forge time.
+
+
+Noise Spread  [per-column slider, default: 0.05, range: 0.01–0.20]
+
+  Standard deviation of the Gaussian noise applied to each feature dimension
+  when generating synthetic variations. Controls how far each clone can stray
+  from the original seed.
+
+  Lower  → tight clones; the model is strict about matching the seed exactly.
+  Higher → loose clones; the model tolerates a wider range of expressions for
+           that gesture. If a trained element stops responding during energetic
+           playing, increasing this (and re-pressing REC → STOP to re-forge)
+           is usually the first thing to try.
+
+
+INTERNAL PARAMETERS  (not in GUI — edit core/config.py directly)
+-----------------------------------------------------------------
+
+frame_size_ms  [default: 250]
+
+  Duration of each analysis window in milliseconds. The system collects all
+  note-on events within this window, extracts a 7D gestalt vector, and runs
+  the classifier once per window.
+
+  Smaller → faster reaction time but fewer notes per frame, weaker gestalt
+            signal. Below 150ms the features become too sparse to be reliable.
+  Larger  → richer feature extraction but sluggish response. 250ms is
+            well-matched to the minimum perceivable gesture duration.
+
+
+ghost_echo_ttl  [default: 3.0 seconds]
+
+  How long the GhostNoteFilter remembers an AI-generated note. Any incoming
+  MIDI note matching a recently sent AI pitch within this window is suppressed,
+  preventing infinite feedback loops from Disklavier physical resonance.
+
+  Increase if the swarm is audibly driving itself (AI notes re-triggering AI
+  responses). Decrease if legitimate human notes close to AI pitches are being
+  silently swallowed.
+
+
+agent_tick_ms  [default: 100]
+
+  How often the Parasite Swarm evaluates each agent's energy level and checks
+  whether to fire a response. Does not affect detection latency (that is
+  controlled by frame_size_ms).
+
+  Smaller → smoother energy dynamics, slightly higher CPU usage.
+  Larger  → coarser timing on AI response bursts.
+
+
+ELEMENTS & WHAT TO TRAIN
+-------------------------
+
+  a  Linear Velocity   Smooth directional runs consistently moving up or down.
+                       Scales, arpeggios in one direction. Detects dominant
+                       directionality (up_velocity or down_velocity).
+
+  b  Vertical Density  Dense simultaneous attacks: thick chords, tone clusters,
+                       wide voicings. Detects high density + high polyphony.
+
+  c  Spatial Leaps     Large interval jumps across the keyboard. Hand crossings,
+                       wide-range arpeggios. Detects high spread + high variance.
+
+  d  Oscillation       Rapid alternation between two pitch regions. Trills,
+                       tremolo, back-and-forth figures. Detects both up_velocity
+                       and down_velocity elevated simultaneously.
+
+  e  Sweeps            Fast scales or glissandi covering a wide pitch range.
+                       Detects high density + high spread together.
+
+  f  Resonance/Pedal   Hardware direct pass-through — NOT trainable.
+                       Sustain pedal (CC 64) controls this element directly.
+                       Pedal down sets energy to 1.0 and enables octave
+                       transposition on all other agent responses.
+
+  g  Pointillism/Void  Single isolated notes with clear silence between each
+                       attack. Extremely sparse texture. Triggers a special
+                       response: the last note played echoes 2 octaves up
+                       after a 1.5s delay. Detects LOW density + LOW polyphony.
+
+
+DETECTION COLORS  (Live Piano Roll)
+-------------------------------------
+
+  Amber   #ff6600   Note is inside the current 250ms analysis window (pending).
+  Orange  #ff8800   Element A — Linear Velocity detected.
+  Blue    #0099ff   Element B — Vertical Density detected.
+  Yellow  #ffee00   Element C — Spatial Leaps detected.
+  Purple  #cc44ff   Element D — Oscillation detected.
+  Mint    #44ff88   Element E — Sweeps detected.
+  Silver  #dddddd   Element G — Pointillism/Void detected.
+  Cyan    #00ffcc   AI-generated note (Parasite Swarm response).
+  Pink    #ff3366   Human note — no gesture detected this frame.
