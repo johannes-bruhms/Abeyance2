@@ -4,7 +4,7 @@
 abeyance2/
 ├── main.py                    # Application entry point, controller, analysis loop, recording
 ├── human_seeds.json           # Accumulated training data (8D vectors per element)
-├── CLAUDE.md                  # Claude Code project instructions
+├── CLAUDE.md                  # Claude Code project instructions, classifier tuning rationale
 ├── .gitignore
 │
 ├── core/

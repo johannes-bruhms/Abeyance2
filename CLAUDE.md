@@ -85,6 +85,7 @@ These pairs cannot co-occur; the lower-confidence one is suppressed:
 - `a` ↔ `d` (linear vs oscillation)
 - `a` ↔ `c` (linear vs shape transposition)
 - `c` ↔ `e` (shape transposition vs sweeps)
+- `d` ↔ `e` (oscillation vs sweeps — narrow alternation vs wide traversal)
 
 ## 8D Gestalt Vector (core/gestalt.py)
 
@@ -126,6 +127,21 @@ These pairs cannot co-occur; the lower-confidence one is suppressed:
 6. Press **CLR** to reset an element to its default profile.
 7. **Start Analysis** to begin live classification and swarm response.
 
+## Classifier Tuning Rationale
+
+Global `affinity_sigma` is 0.18 (tightened from 0.22) for sharper element discrimination — neighboring profiles bleed less at this width.
+
+Per-element tuning decisions based on session log analysis (2026-04-04):
+
+| Element | Key Weight Changes | Threshold | EMA Alpha | Rationale |
+|---------|-------------------|-----------|-----------|-----------|
+| `a` Linear Velocity | density 0.15 (low), up/down 0.90 (high) | 0.40 | 0.35 | Direction-dominant — density caused false co-activation with Sweeps |
+| `b` Vertical Density | density+polyphony 0.90 (high) | 0.35 | 0.25 (raised from 0.15) | Faster chord response — old alpha needed 10+ frames to reach threshold |
+| `c` Transposed Shapes | variance 0.90 (raised from 0.80) | 0.35 | 0.35 | Strengthen the distinguishing feature |
+| `d` Oscillation | up/down 0.90 (high) | 0.35 | 0.35 | Now mutually exclusive with Sweeps (d↔e) |
+| `e` Sweeps | spread 0.85 (high), up/down 0.40 (reduced) | 0.42 | 0.35 | Must require wide range; reduced velocity overlap with Linear Velocity |
+| `f` Extreme Registers | bimodality 1.00 + spread 0.80 | 0.35 | 0.20 | Bimodality is the decisive separator from C |
+
 ## Known Limitations
 
 - `ml/classifier.py` class name is `HybridGestaltDTW` but no longer uses DTW — it is a pure affinity scorer. Name kept for continuity.
@@ -135,3 +151,13 @@ These pairs cannot co-occur; the lower-confidence one is suppressed:
 
 - **`docs/RESEARCH_NOTES.md`** — Cognitive overload theoretical framework and thesis framing.
 - **`docs/DIRECTORY.md`** — Full project structure map.
+
+### Documentation Maintenance
+
+When making changes to the codebase, **always update all affected documentation** before committing:
+
+- **`CLAUDE.md`** — Update if any architecture, signal flow, element taxonomy, config parameters, key components, or workflows change. This is the primary project reference.
+- **`docs/DIRECTORY.md`** — Update if files/directories are added, removed, or renamed.
+- **`docs/RESEARCH_NOTES.md`** — Update if the theoretical framework, element design rationale, or experimental methodology changes.
+- **Classifier Tuning Rationale** (above) — Update whenever `ELEMENT_PARAMS`, `AFFINITY_WEIGHTS`, `EMA_ALPHAS`, `MUTUAL_EXCLUSION`, or `affinity_sigma` are changed, including the reasoning behind the change.
+- **Inline code comments** — Keep `core/config.py` weight comments in sync with the rationale table above.

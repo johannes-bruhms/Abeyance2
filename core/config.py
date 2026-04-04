@@ -10,7 +10,7 @@ CONFIG = {
     'noise_spread': 0.05,       # Gaussian variance on synthetic clones
     'agent_tick_ms': 100,       # Swarm loop tick interval (ms)
     # Affinity-based multi-gesture detection
-    'affinity_sigma': 0.22,     # Gaussian kernel width — lower = sharper element discrimination
+    'affinity_sigma': 0.18,     # Gaussian kernel width — lower = sharper element discrimination
     'affinity_threshold': 0.35, # Minimum EMA-smoothed confidence to activate an element
     # Gestalt feature extraction
     'polyphony_threshold_ms': 15,   # Max inter-onset gap (ms) to count as simultaneous
@@ -25,13 +25,12 @@ CONFIG = {
 # Per-element tunable model parameters.
 # Each element can be tuned independently via the GUI Elements tab.
 ELEMENT_PARAMS = {
-    el: {
-        'affinity_threshold': 0.35,
-        'affinity_sigma':     0.22,
-        'energy_boost':       0.20,
-        'energy_decay':       0.05,
-    }
-    for el in ('a', 'b', 'c', 'd', 'e', 'f')
+    'a': {'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'b': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'c': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'd': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'e': {'affinity_threshold': 0.42, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'f': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
 }
 
 ELEMENTS = {
@@ -58,18 +57,18 @@ DEFAULT_CENTROIDS = {
 # Dimension importance weights per element
 # [density, polyphony, spread, variance, up_vel, down_vel, articulation, bimodality]
 AFFINITY_WEIGHTS = {
-    'a': [0.30, 0.10, 0.10, 0.10, 0.80, 0.80, 0.30, 0.05],
-    'b': [0.90, 0.90, 0.10, 0.10, 0.20, 0.20, 0.50, 0.10],
-    'c': [0.20, 0.80, 0.50, 0.80, 0.20, 0.20, 0.30, 0.20],  # variance dominant, low bimodality weight
-    'd': [0.40, 0.10, 0.30, 0.30, 0.90, 0.90, 0.60, 0.05],
-    'e': [0.80, 0.20, 0.70, 0.40, 0.50, 0.50, 0.60, 0.05],
+    'a': [0.15, 0.10, 0.10, 0.10, 0.90, 0.90, 0.30, 0.05],  # direction-dominant: low density, high up/down
+    'b': [0.90, 0.90, 0.10, 0.10, 0.20, 0.20, 0.50, 0.10],  # density + polyphony dominant
+    'c': [0.20, 0.80, 0.50, 0.90, 0.20, 0.20, 0.30, 0.20],  # variance dominant (0.80→0.90), low bimodality
+    'd': [0.40, 0.10, 0.30, 0.30, 0.90, 0.90, 0.60, 0.05],  # up/down velocity for oscillation
+    'e': [0.90, 0.15, 0.85, 0.40, 0.40, 0.40, 0.60, 0.05],  # spread + density dominant, reduced velocity overlap with A
     'f': [0.30, 0.60, 0.80, 0.40, 0.10, 0.10, 0.30, 1.00],  # bimodality + spread dominant, separates from C
 }
 
 # Per-element EMA alpha: fast (0.35) for transient gestures, slow (0.15) for sustained states
 EMA_ALPHAS = {
     'a': 0.35,  # transient directional events
-    'b': 0.15,  # sustained dense texture
+    'b': 0.25,  # sustained dense texture (raised from 0.15 for faster chord response)
     'c': 0.35,  # transient leap events
     'd': 0.35,  # transient oscillation
     'e': 0.35,  # transient sweep
@@ -78,4 +77,4 @@ EMA_ALPHAS = {
 
 # Element pairs that are acoustically contradictory and cannot co-occur.
 # When both score above threshold, the lower-confidence one is suppressed.
-MUTUAL_EXCLUSION = [('a', 'd'), ('a', 'c'), ('c', 'e')]
+MUTUAL_EXCLUSION = [('a', 'd'), ('a', 'c'), ('c', 'e'), ('d', 'e')]
