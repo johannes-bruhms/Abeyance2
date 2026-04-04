@@ -3,6 +3,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 import mido
+from core.logger import log
 from gui.piano_roll import PianoRollCanvas, ELEMENT_COLORS
 from core.config import CONFIG, ELEMENTS, ELEMENT_PARAMS
 
@@ -373,8 +374,26 @@ class AbeyanceGUI:
         try:
             self._do_toggle_recording(el_id)
         except Exception as e:
-            import traceback
-            self.log_msg(f"[ERR] REC failed: {e}\n{traceback.format_exc()}")
+            log.error(f"REC toggle failed: {e}", exc=True)
+            # Sync GUI state back to controller state to prevent desync
+            self._sync_recording_state()
+
+    def _sync_recording_state(self):
+        """Re-sync GUI recording indicators with the controller's actual state."""
+        ac = self.app_controller
+        if not ac.recording:
+            # Controller isn't recording — reset all GUI recording state
+            if self.currently_recording_el is not None:
+                self._set_col_recording(self.currently_recording_el, False)
+            self.currently_recording_el = None
+        else:
+            # Controller IS recording — make sure GUI reflects it
+            el = ac.recording_element
+            if el and el != self.currently_recording_el:
+                if self.currently_recording_el is not None:
+                    self._set_col_recording(self.currently_recording_el, False)
+                self._set_col_recording(el, True)
+                self.currently_recording_el = el
 
     def _do_toggle_recording(self, el_id):
         ac = self.app_controller
@@ -485,7 +504,7 @@ class AbeyanceGUI:
         mini.delete('all')
         mini.create_text(85, 40, text='no seed', fill='#444',
                          font=('Consolas', 8), tags='placeholder')
-        self.log_msg(f'[CLR] Seed cleared for: {el_id.upper()} — reverting to default profile.')
+        log.info(f'Seed cleared for: {el_id.upper()} — reverting to default profile.', element=el_id)
 
     def _draw_mini_midi(self, el_id, raw_notes):
         canvas = self.el_widgets[el_id]['mini']

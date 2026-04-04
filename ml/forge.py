@@ -3,6 +3,9 @@ import json
 import os
 import random
 
+GESTALT_DIM = 8  # Current gestalt vector dimensionality
+
+
 class GestureForge:
     """Handles saving human seeds and generating synthetic datasets via Gaussian noise."""
     def __init__(self, seed_file="human_seeds.json"):
@@ -12,7 +15,18 @@ class GestureForge:
     def load_seeds(self):
         if os.path.exists(self.seed_file):
             with open(self.seed_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+            # Migrate old seeds to current dimensionality
+            migrated = False
+            for el_id, frames in data.items():
+                for i, vec in enumerate(frames):
+                    if len(vec) < GESTALT_DIM:
+                        frames[i] = vec + [0.0] * (GESTALT_DIM - len(vec))
+                        migrated = True
+            if migrated:
+                with open(self.seed_file, 'w') as f:
+                    json.dump(data, f, indent=4)
+            return data
         return {}
 
     def save_seeds(self):
@@ -22,7 +36,7 @@ class GestureForge:
     def add_human_seed(self, element_id, vector_sequence):
         """
         Append one gesture iteration to the seed for element_id.
-        Each REC→STOP cycle calls this once. Multiple calls accumulate,
+        Each REC->STOP cycle calls this once. Multiple calls accumulate,
         allowing the model to learn from several distinct iterations.
         Call clear_seed() first to start fresh.
         """
@@ -40,8 +54,7 @@ class GestureForge:
     def forge_variations(self, element_id, num_vars, spread):
         """Generates a dataset of synthetic templates based on the human seed."""
         if element_id not in self.seeds or not self.seeds[element_id]:
-            # Fallback: random 8D initialization — 8 to match the gestalt vector
-            base_seq = [[random.random() for _ in range(8)] for _ in range(8)]
+            base_seq = [[random.random() for _ in range(GESTALT_DIM)] for _ in range(8)]
         else:
             base_seq = self.seeds[element_id]
 

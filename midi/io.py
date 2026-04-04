@@ -2,6 +2,7 @@
 import mido
 import time
 import threading
+from core.logger import log
 
 class GhostNoteFilter:
     def __init__(self, echo_ttl):
@@ -39,9 +40,9 @@ class MidiIO:
             # Note: Update these names based on your Disklavier's actual port names if needed
             self.inport = mido.open_input(in_port_name, callback=self._midi_callback)
             self.outport = mido.open_output(out_port_name)
-            print(f"Connected to {in_port_name} / {out_port_name}")
+            log.info(f"MIDI connected: {in_port_name} / {out_port_name}")
         except OSError as e:
-            print(f"MIDI Error: {e} - Starting in offline/dummy mode.")
+            log.warn(f"MIDI unavailable: {e} — starting in offline/dummy mode")
             self.inport = None
             self.outport = None
 

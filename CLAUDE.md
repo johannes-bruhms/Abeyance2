@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Abeyance Protocol – Case Study 2** is a real-time computer-music interface (CMI) for Yamaha Disklavier (acoustic grand piano with MIDI solenoids). It creates a closed-loop system where a performer's gestures are analyzed via machine learning and autonomously responded to by an AI "Parasite Swarm" that generates its own MIDI output back into the piano.
 
-The system is designed to study **cognitive channel capacity and attentional overload** (motivated by Miller's law, operationalized via Cowan, Pylyshyn, Wickens, and Bregman). All 6 gesture elements can overlap simultaneously, creating conditions where the performer's ability to track independent gesture-response channels degrades measurably. See `RESEARCH_NOTES.md` for the full theoretical framework.
+The system is designed to study **cognitive channel capacity and attentional overload** (motivated by Miller's law, operationalized via Cowan, Pylyshyn, Wickens, and Bregman). All 6 gesture elements can overlap simultaneously, creating conditions where the performer's ability to track independent gesture-response channels degrades measurably. See `docs/RESEARCH_NOTES.md` for the full theoretical framework.
 
 ## Running the Application
 
@@ -107,6 +107,7 @@ These pairs cannot co-occur; the lower-confidence one is suppressed:
 
 - **`core/config.py`**: All global tuning constants — frame size, energy thresholds, ghost echo TTL, gestalt parameters, per-element model params. Single source of truth for all magic numbers.
 - **`core/gestalt.py`**: `extract_micro_gestalt()` — 8D feature extraction from raw MIDI. Dynamics-neutral.
+- **`core/logger.py`**: Centralized logging singleton. `from core.logger import log` then `log.info(...)`, `log.warn(...)`, `log.error(..., exc=True)`. Writes to `abeyance.log` (auto-rotates at 1MB) and GUI event log.
 - **`ml/classifier.py`** (`HybridGestaltDTW`): Affinity-based multi-label scorer. Computes per-element weighted Gaussian proximity on every 250ms frame with EMA smoothing and mutual-exclusion suppression. Multiple elements can be active simultaneously.
 - **`ml/forge.py`** (`GestureForge`): Bootstraps training data from `human_seeds.json` by generating Gaussian-perturbed synthetic variants per element. Seed data accumulates across multiple recording takes.
 - **`midi/io.py`** (`GhostNoteFilter`): TTL-based dict of AI-generated note fingerprints. Suppresses both `note_on` and `note_off` echoes to prevent infinite feedback loops.
@@ -129,3 +130,8 @@ These pairs cannot co-occur; the lower-confidence one is suppressed:
 
 - `ml/classifier.py` class name is `HybridGestaltDTW` but no longer uses DTW — it is a pure affinity scorer. Name kept for continuity.
 - Session logs (`session_*.json`) accumulate in the project root during analysis sessions.
+
+## Documentation
+
+- **`docs/RESEARCH_NOTES.md`** — Cognitive overload theoretical framework and thesis framing.
+- **`docs/DIRECTORY.md`** — Full project structure map.

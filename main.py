@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from core.config import CONFIG, ELEMENTS, ELEMENT_PARAMS
 from core.gestalt import extract_micro_gestalt
+from core.logger import log
 from midi.io import MidiIO, GhostNoteFilter
 from midi.playback import PlaybackEngine
 from ml.classifier import HybridGestaltDTW
@@ -49,6 +50,9 @@ class AbeyanceApp:
         # Init GUI last, passing self to act as the controller
         self.gui = AbeyanceGUI(self.root, self)
 
+        # Wire logger to GUI event log
+        log.set_gui_callback(self.gui.log_msg)
+
     # ------------------------------------------------------------------ MIDI
 
     def connect_midi(self, in_port_name, out_port_name):
@@ -77,7 +81,7 @@ class AbeyanceApp:
             self.swarm = ParasiteSwarm(ELEMENTS, self.playback)
             return True
         except Exception as e:
-            print(f"Failed to connect MIDI: {e}")
+            log.error(f"Failed to connect MIDI: {e}", exc=True)
             return False
 
     def _on_midi_in(self, note, velocity):
@@ -138,10 +142,10 @@ class AbeyanceApp:
         try:
             with open(path, 'w') as f:
                 json.dump(log_snapshot, f, indent=2)
-            self.gui.log_msg(f'[LOG] Session saved → {path}  ({len(log_snapshot)} frames)')
+            log.info(f'Session saved → {path}  ({len(log_snapshot)} frames)')
             self.root.after(0, self.gui.status_var.set, f'Saved: {path}')
         except Exception as e:
-            self.gui.log_msg(f'[ERR] Could not save session log: {e}')
+            log.error(f'Could not save session log: {e}', exc=True)
 
     def _analysis_loop(self):
         while self.analysis_running:
@@ -195,7 +199,7 @@ class AbeyanceApp:
 
                 sorted_active = sorted(active.items(), key=lambda x: x[1], reverse=True)
                 status_msg = '  '.join(f'{ELEMENTS[l]} {c:.2f}' for l, c in sorted_active)
-                print(status_msg)
+                log.debug(status_msg)
                 self.gui.root.after(0, self.gui.status_var.set, status_msg)
 
             elapsed    = time.perf_counter() - start_time
@@ -217,7 +221,7 @@ class AbeyanceApp:
             self.recording_raw_notes      = []
             self.recording_raw_durations  = []
             self.recording_start_t        = time.perf_counter()
-            self.gui.log_msg(f"[REC] Recording started for: {ELEMENTS[element_id]}")
+            log.info(f"Recording started for: {ELEMENTS[element_id]}", element=element_id)
             return True
         else:
             self.recording = False
@@ -277,16 +281,15 @@ class AbeyanceApp:
                 self.dtw.update_element(target, n_vars, n_spread)
                 total_seed_frames = len(self.dtw.forge.seeds.get(target, []))
                 strip_msg = f' ({stripped} silent frames removed)' if stripped else ''
-                self.gui.log_msg(
-                    f"[REC] +{len(frames)} frames → {ELEMENTS[target]}{strip_msg} "
-                    f"| seed total: {total_seed_frames} frames"
-                )
+                log.info(
+                    f"+{len(frames)} frames → {ELEMENTS[target]}{strip_msg} "
+                    f"| seed total: {total_seed_frames} frames",
+                    element=target)
                 self.gui.update_training_ui(target, surviving_notes, total_seed_frames, n_vars)
             else:
-                self.gui.log_msg(
-                    f"[REC] No active frames captured ({stripped} silent frames removed) "
-                    f"— play more densely, or the entire recording was silence."
-                )
+                log.warn(
+                    f"No active frames captured ({stripped} silent frames removed) "
+                    f"— play more densely, or the entire recording was silence.")
             return False
 
 
