@@ -1,14 +1,14 @@
 # gui/piano_roll.py
 import tkinter as tk
-from core.config import ELEMENTS
+from core.config import ELEMENTS, CONFIG
 
 ELEMENT_COLORS = {
     'a': '#ff8800',  # orange     — Linear Velocity
     'b': '#0099ff',  # blue       — Vertical Density
-    'c': '#ffee00',  # yellow     — Spatial Leaps
+    'c': '#ffee00',  # yellow     — Transposed Shapes
     'd': '#cc44ff',  # purple     — Oscillation
     'e': '#44ff88',  # mint green — Sweeps
-    'g': '#dddddd',  # silver     — Pointillism/Void
+    'f': '#ff4488',  # hot pink   — Extreme Registers
 }
 PENDING_COLOR = '#ff6600'   # amber: inside the current analysis window
 HUMAN_BASE    = '#ff3366'   # neon pink: human note, no detection
@@ -43,7 +43,7 @@ class PianoRollCanvas(tk.Canvas):
         self._draw_legend(w, h)
 
     def _draw_legend(self, w, h):
-        items = [(k, v) for k, v in ELEMENTS.items() if k != 'f']
+        items = list(ELEMENTS.items())
         x, y = 6, h - 18
         for el_id, name in items:
             color = ELEMENT_COLORS.get(el_id, HUMAN_BASE)
@@ -183,13 +183,14 @@ class PianoRollCanvas(tk.Canvas):
         w = self.winfo_width() if self.winfo_width() > 10 else 600
         to_delete = []
 
+        scroll_px = CONFIG['roll_scroll_px']
         for note_id, data in self.notes.items():
-            data['x1'] -= 4
+            data['x1'] -= scroll_px
 
             if data['is_active']:
                 data['x2'] = w - 5
             else:
-                data['x2'] -= 4
+                data['x2'] -= scroll_px
                 if data['x2'] < -20:
                     to_delete.append(note_id)
                     continue

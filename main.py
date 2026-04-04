@@ -2,6 +2,7 @@
 import tkinter as tk
 import threading
 import time
+from collections import defaultdict
 from core.config import CONFIG, ELEMENTS, ELEMENT_PARAMS
 from core.gestalt import extract_micro_gestalt
 from midi.io import MidiIO, GhostNoteFilter
@@ -29,13 +30,14 @@ class AbeyanceApp:
         self.recording           = False
         self.recording_element        = None
         self.recording_frames         = []
+        self.recording_frame_times    = []   # (t_start, t_end) per frame
         self.recording_raw_notes      = []   # (pitch, timestamp) events during recording
         self.recording_raw_durations  = []   # (timestamp_of_noteoff, duration) during recording
         self.recording_start_t        = 0.0
 
         # Note-duration tracking for articulation feature
-        # pitch → note-on timestamp (for in-flight notes)
-        self.note_on_times        = {}
+        # pitch → [note-on timestamps] (stack so repeated pitches don't collide)
+        self.note_on_times        = defaultdict(list)
         self.completed_durations  = []  # durations collected this frame
 
         self.current_frame_id = 0
@@ -83,8 +85,8 @@ class AbeyanceApp:
         self.gui.add_note_visual(note, velocity, is_ai=False,
                                  frame_id=self.current_frame_id)
         with self.lock:
-            self.current_frame_notes.append((note, now))
-            self.note_on_times[note] = now
+            self.current_frame_notes.append((note, velocity, now))
+            self.note_on_times[note].append(now)
             if self.recording:
                 self.recording_raw_notes.append((note, now))
 
@@ -92,8 +94,9 @@ class AbeyanceApp:
         now = time.perf_counter()
         self.gui.release_note_visual(note)
         with self.lock:
-            if note in self.note_on_times:
-                duration = now - self.note_on_times.pop(note)
+            if self.note_on_times[note]:
+                onset = self.note_on_times[note].pop(0)  # FIFO: oldest note-on first
+                duration = now - onset
                 self.completed_durations.append(duration)
                 if self.recording:
                     self.recording_raw_durations.append((now, duration))
@@ -119,22 +122,26 @@ class AbeyanceApp:
 
     def stop_analysis(self):
         self.analysis_running = False
+        if self.playback:
+            self.playback.cancel_all()
         self._save_session_log()
 
     def _save_session_log(self):
-        if not self.session_log:
+        with self.lock:
+            log_snapshot = list(self.session_log)
+            self.session_log = []
+        if not log_snapshot:
             return
         import json, datetime
         ts   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         path = f'session_{ts}.json'
         try:
             with open(path, 'w') as f:
-                json.dump(self.session_log, f, indent=2)
-            self.gui.log_msg(f'[LOG] Session saved → {path}  ({len(self.session_log)} frames)')
+                json.dump(log_snapshot, f, indent=2)
+            self.gui.log_msg(f'[LOG] Session saved → {path}  ({len(log_snapshot)} frames)')
             self.root.after(0, self.gui.status_var.set, f'Saved: {path}')
         except Exception as e:
             self.gui.log_msg(f'[ERR] Could not save session log: {e}')
-        self.session_log = []
 
     def _analysis_loop(self):
         while self.analysis_running:
@@ -150,23 +157,30 @@ class AbeyanceApp:
                 self.current_frame_notes   = []
                 self.completed_durations   = []
 
-            # 7D gestalt vector — articulation now included via completed durations
-            vector_7d = extract_micro_gestalt(notes_to_process, durations_this_frame)
-            self.dtw.push_frame(vector_7d)
+            # Split frame data: (pitch, timestamp) for gestalt, (pitch, velocity) for swarm
+            notes_for_gestalt = [(n[0], n[2]) for n in notes_to_process]
+            notes_for_swarm   = [(n[0], n[1]) for n in notes_to_process]  # (pitch, velocity)
+
+            # 8D gestalt vector — dynamics-neutral (velocity not included)
+            vector_8d = extract_micro_gestalt(notes_for_gestalt, durations_this_frame)
+            self.dtw.push_frame(vector_8d)
 
             if self.recording:
-                self.recording_frames.append(vector_7d)
+                self.recording_frames.append(vector_8d)
+                self.recording_frame_times.append((start_time, start_time + frame_sec))
 
             scores = self.dtw.score_all()
 
             # Log every frame for post-performance analysis
             t_rel = round(time.perf_counter() - self.session_start, 3)
-            self.session_log.append({
+            log_entry = {
                 't':      t_rel,
                 'frame':  frame_id,
                 'scores': {k: round(v, 3) for k, v in scores.items()},
                 'notes':  [n[0] for n in notes_to_process],
-            })
+            }
+            with self.lock:
+                self.session_log.append(log_entry)
             self.root.after(0, self.gui.push_timeline, scores)
 
             active = {lbl: c for lbl, c in scores.items()
@@ -175,10 +189,9 @@ class AbeyanceApp:
             self.gui.resolve_frame_visual(frame_id, active)
 
             if active:
-                raw_pitches = [n[0] for n in notes_to_process]
                 if self.swarm:
                     for label, confidence in active.items():
-                        self.swarm.feed(label, raw_pitches, weight=confidence)
+                        self.swarm.feed(label, notes_for_swarm, weight=confidence)
 
                 sorted_active = sorted(active.items(), key=lambda x: x[1], reverse=True)
                 status_msg = '  '.join(f'{ELEMENTS[l]} {c:.2f}' for l, c in sorted_active)
@@ -200,6 +213,7 @@ class AbeyanceApp:
             self.recording                = True
             self.recording_element        = element_id
             self.recording_frames         = []
+            self.recording_frame_times    = []   # (t_start, t_end) per frame
             self.recording_raw_notes      = []
             self.recording_raw_durations  = []
             self.recording_start_t        = time.perf_counter()
@@ -208,10 +222,12 @@ class AbeyanceApp:
         else:
             self.recording = False
             frames        = self.recording_frames
+            frame_times   = self.recording_frame_times
             raw_notes     = self.recording_raw_notes
             raw_durations = self.recording_raw_durations
             target        = self.recording_element
             self.recording_frames        = []
+            self.recording_frame_times   = []
             self.recording_raw_notes     = []
             self.recording_raw_durations = []
             self.recording_element       = None
@@ -228,27 +244,49 @@ class AbeyanceApp:
                 t_end = raw_notes[-1][1] + frame_sec
                 while t < t_end:
                     chunk = [(p, ts) for p, ts in raw_notes if t <= ts < t + frame_sec]
-                    # Durations whose note-off timestamp falls within this frame window
                     dur_chunk = [d for ts_off, d in raw_durations if t <= ts_off < t + frame_sec]
                     frames.append(extract_micro_gestalt(chunk, dur_chunk))
+                    frame_times.append((t, t + frame_sec))
                     t += frame_sec
 
             # Strip near-silent frames (density < 0.05 ≈ fewer than 2 notes per 250ms).
             # Silence before/after/between gestures drags the centroid toward zero.
-            frames = [f for f in frames if float(f[0]) >= 0.05]
+            total_before = len(frames)
+            kept = [(f, ft) for f, ft in zip(frames, frame_times)
+                    if float(f[0]) >= 0.05]
+            if kept:
+                frames, frame_times = zip(*kept)
+                frames = list(frames)
+                frame_times = list(frame_times)
+            else:
+                frames, frame_times = [], []
+            stripped = total_before - len(frames)
+
+            # Filter raw_notes to only those within surviving frame windows,
+            # so the mini canvas accurately reflects the training data.
+            surviving_notes = []
+            for pitch, ts in raw_notes:
+                for t_start, t_end in frame_times:
+                    if t_start <= ts < t_end:
+                        surviving_notes.append((pitch, ts))
+                        break
 
             if frames:
                 frame_list = [v.tolist() for v in frames]
                 self.dtw.forge.add_human_seed(target, frame_list)
                 self.dtw.update_element(target, n_vars, n_spread)
                 total_seed_frames = len(self.dtw.forge.seeds.get(target, []))
+                strip_msg = f' ({stripped} silent frames removed)' if stripped else ''
                 self.gui.log_msg(
-                    f"[REC] +{len(frames)} frames → {ELEMENTS[target]} "
-                    f"(seed total: {total_seed_frames} frames)"
+                    f"[REC] +{len(frames)} frames → {ELEMENTS[target]}{strip_msg} "
+                    f"| seed total: {total_seed_frames} frames"
                 )
-                self.gui.update_training_ui(target, raw_notes, total_seed_frames, n_vars)
+                self.gui.update_training_ui(target, surviving_notes, total_seed_frames, n_vars)
             else:
-                self.gui.log_msg("[REC] No active frames captured — play more densely, or the whole recording was silence.")
+                self.gui.log_msg(
+                    f"[REC] No active frames captured ({stripped} silent frames removed) "
+                    f"— play more densely, or the entire recording was silence."
+                )
             return False
 
 

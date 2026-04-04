@@ -11,15 +11,14 @@ class HybridGestaltDTW:
     """
     Affinity-based multi-label gesture scorer for polyphonic piano playing.
 
-    Rather than sequential DTW pattern matching (which requires isolating a single
-    gesture), this scorer computes per-element feature-space proximity on every 250ms
-    frame. Multiple elements can score above threshold simultaneously, allowing the
-    system to detect overlapping gestures — e.g. dense left-hand chords (Element B)
-    while the right hand makes spatial leaps (Element C).
+    Computes per-element feature-space proximity on every 250ms frame using the
+    live 8D gestalt vector. Multiple elements can score above threshold
+    simultaneously, allowing the system to detect overlapping gestures — e.g.
+    dense left-hand chords (Element B) while the right hand sweeps (Element E).
 
     Detection pipeline per frame:
-      1. Compute weighted Gaussian affinity between the live 6D vector and each
-         element's profile (centroid collapsed to a single point in feature space).
+      1. Compute weighted Gaussian affinity between the live 8D vector and each
+         element's profile (centroid in feature space).
       2. Apply per-element EMA smoothing (fast alpha for transient gestures,
          slow alpha for sustained states).
       3. Apply mutual-exclusion logic to suppress acoustically contradictory pairs.
@@ -29,16 +28,14 @@ class HybridGestaltDTW:
     def __init__(self):
         self.forge = GestureForge()
         self.templates = {}    # time-series templates (kept for potential future use)
-        self.profiles = {}     # (6,) feature profile per element — the affinity target
+        self.profiles = {}     # (8,) feature profile per element — the affinity target
         self.rolling_window = []
-        self._ema = {k: 0.0 for k in ELEMENTS if k != 'f'}
+        self._ema = {k: 0.0 for k in ELEMENTS}
 
         self.load_all_from_forge()
 
     def load_all_from_forge(self):
         for el_id in ELEMENTS:
-            if el_id == 'f':
-                continue
             self.update_element(el_id, CONFIG['variations'], CONFIG['noise_spread'])
 
     def update_element(self, element_id, num_vars, spread):
@@ -47,15 +44,15 @@ class HybridGestaltDTW:
         self.templates[element_id] = templates
 
         if self.forge.seeds.get(element_id):
-            # Human seed recorded — derive profile as mean over all frames × all variations
-            arr = np.array(templates, dtype=float)   # (num_vars, n_frames, 6)
-            self.profiles[element_id] = arr.mean(axis=(0, 1))  # → (6,)
+            # Human seed recorded — derive profile as mean over all frames x all variations
+            arr = np.array(templates, dtype=float)   # (num_vars, n_frames, 8)
+            self.profiles[element_id] = arr.mean(axis=(0, 1))  # -> (8,)
         else:
             # No training data yet — use the musically-informed hardcoded default
             self.profiles[element_id] = np.array(DEFAULT_CENTROIDS[element_id], dtype=float)
 
-    def push_frame(self, vector_6d):
-        self.rolling_window.append(np.asarray(vector_6d, dtype=float))
+    def push_frame(self, vector_8d):
+        self.rolling_window.append(np.asarray(vector_8d, dtype=float))
         if len(self.rolling_window) > 4:   # ~1 second of history for note-gate check
             self.rolling_window.pop(0)
 
@@ -70,11 +67,8 @@ class HybridGestaltDTW:
             return dict(self._ema)
 
         # Note-gate: don't inject new scores during true silence between phrases.
-        # Density < 0.02 means ~0 notes per 250ms frame averaged over 2 frames.
-        # This threshold is intentionally low so that sparse pointillist playing
-        # (1 note/frame = density ~0.04) still passes through to score element g.
         recent_density = float(np.mean([v[0] for v in self.rolling_window[-2:]]))
-        if recent_density < 0.02:
+        if recent_density < CONFIG['silence_density_gate']:
             # Silence: decay EMA aggressively so phantom activations don't
             # persist across multiple frames after notes stop.
             for label in self._ema:

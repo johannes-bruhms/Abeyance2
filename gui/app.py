@@ -1,12 +1,12 @@
 # gui/app.py
+import time
 import tkinter as tk
 from tkinter import ttk
 import mido
 from gui.piano_roll import PianoRollCanvas, ELEMENT_COLORS
 from core.config import CONFIG, ELEMENTS, ELEMENT_PARAMS
 
-# Elements available for training (pedal is hardware-only)
-TRAINABLE = [k for k in ELEMENTS if k != 'f']
+TRAINABLE = list(ELEMENTS.keys())
 BG = '#2b2b2b'
 BG_COL = '#1e1e1e'
 
@@ -17,7 +17,7 @@ ELEMENT_HINTS = {
     'c': 'Play an interval or chord shape\n(e.g. octave, 5th) then shift it\nrapidly to a different register.',
     'd': 'Alternate rapidly between\ntwo pitch regions.\nTrils, tremolo figures.',
     'e': 'Sweep fast across a wide\npitch range. Glissandi,\nrapid scale passages.',
-    'g': 'Single isolated notes with\nclear silence between each.\nAs sparse as possible.',
+    'f': 'Play simultaneously in the\nhighest and lowest registers.\nBoth hands at extremes.',
 }
 
 
@@ -42,6 +42,9 @@ class AbeyanceGUI:
         self.el_widgets = {}   # el_id → dict of widget refs
         self.currently_recording_el = None
         self.timeline_data = []   # list of {el_id: conf} dicts, one per analysis frame
+        # Accumulated raw notes per element (for mini canvas across takes)
+        self.el_accumulated_notes = {k: [] for k in ELEMENTS}
+        self.el_take_count = {k: 0 for k in ELEMENTS}
 
         self._build_controls()
         self._build_visuals()
@@ -145,7 +148,9 @@ class AbeyanceGUI:
         self.timeline_data.append(dict(scores))
         if len(self.timeline_data) > 600:   # ~2.5 min at 250 ms/frame
             self.timeline_data.pop(0)
-        self._redraw_timeline()
+        # Only redraw when the timeline tab is actually visible
+        if str(self.notebook.select()) == str(self._tl_frame):
+            self._redraw_timeline()
 
     def _redraw_timeline(self):
         c = self.timeline_canvas
@@ -215,11 +220,11 @@ class AbeyanceGUI:
         self.notebook.add(roll_frame, text="Live Piano Roll")
 
         # Tab 2 — Confidence Timeline
-        tl_frame = tk.Frame(self.notebook, bg='#0a0a0a')
-        self.timeline_canvas = tk.Canvas(tl_frame, bg='#0a0a0a', highlightthickness=0)
+        self._tl_frame = tk.Frame(self.notebook, bg='#0a0a0a')
+        self.timeline_canvas = tk.Canvas(self._tl_frame, bg='#0a0a0a', highlightthickness=0)
         self.timeline_canvas.pack(fill=tk.BOTH, expand=True)
         self.timeline_canvas.bind('<Configure>', lambda e: self._redraw_timeline())
-        self.notebook.add(tl_frame, text="Confidence Timeline")
+        self.notebook.add(self._tl_frame, text="Confidence Timeline")
 
         # Tab 3 — Elements (training)
         self.train_frame = tk.Frame(self.notebook, bg=BG)
@@ -410,10 +415,31 @@ class AbeyanceGUI:
             ws['rec_btn'].config(text='STOP', bg='#cc5500')
             ws['dot'].config(bg='#ff2200')
             ws['status_lbl'].config(text='Recording...', fg='#ff6600')
+            self._rec_poll_id = self.root.after(200, self._poll_recording, el_id)
         else:
             ws['rec_btn'].config(text='REC', bg='#880000')
             ws['dot'].config(bg='#555555')
             ws['status_lbl'].config(text='Idle', fg='#888')
+            if hasattr(self, '_rec_poll_id') and self._rec_poll_id:
+                self.root.after_cancel(self._rec_poll_id)
+                self._rec_poll_id = None
+
+    def _poll_recording(self, el_id):
+        """Update the status label with live note count during recording."""
+        ac = self.app_controller
+        if not ac.recording or el_id not in self.el_widgets:
+            return
+        ws = self.el_widgets[el_id]
+        n_notes = len(ac.recording_raw_notes)
+        n_frames = len(ac.recording_frames)
+        elapsed = round(time.perf_counter() - ac.recording_start_t, 1)
+        ws['status_lbl'].config(
+            text=f'REC {elapsed}s  {n_notes} notes  {n_frames} frames',
+            fg='#ff6600')
+        # Blink the dot
+        dot_color = '#ff2200' if int(elapsed * 2) % 2 == 0 else '#661100'
+        ws['dot'].config(bg=dot_color)
+        self._rec_poll_id = self.root.after(200, self._poll_recording, el_id)
 
     def update_training_ui(self, el_id, raw_notes, total_frames, synth_count):
         """Called by main.py after a recording iteration stops and templates are forged."""
@@ -423,14 +449,20 @@ class AbeyanceGUI:
         ws = self.el_widgets[el_id]
         el_color = ELEMENT_COLORS.get(el_id, '#ffffff')
 
-        vs['stat_seed'].set(f'Seed: {total_frames} frames (accumulated)')
+        # Accumulate notes across takes for the mini canvas
+        self.el_accumulated_notes[el_id].extend(raw_notes)
+        self.el_take_count[el_id] += 1
+        takes = self.el_take_count[el_id]
+
+        vs['stat_seed'].set(f'Seed: {total_frames} frames ({takes} take{"s" if takes != 1 else ""})')
         vs['stat_synth'].set(f'Synth: {synth_count} variations forged')
         vs['stat_model'].set('Model: trained on human seed')
 
         ws['dot'].config(bg=el_color)
         ws['status_lbl'].config(text='Trained', fg=el_color)
 
-        self._draw_mini_midi(el_id, raw_notes)
+        # Show ALL accumulated notes, not just the last take
+        self._draw_mini_midi(el_id, self.el_accumulated_notes[el_id])
 
     def _clear_seed(self, el_id):
         """Clear all recorded seed data for el_id and reset to default profile."""
@@ -446,6 +478,9 @@ class AbeyanceGUI:
         vs['stat_model'].set('Model: default profile')
         ws['dot'].config(bg='#555555')
         ws['status_lbl'].config(text='Cleared', fg='#888888')
+        # Reset accumulated take data
+        self.el_accumulated_notes[el_id] = []
+        self.el_take_count[el_id] = 0
         mini = ws['mini']
         mini.delete('all')
         mini.create_text(85, 40, text='no seed', fill='#444',

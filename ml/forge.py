@@ -40,8 +40,8 @@ class GestureForge:
     def forge_variations(self, element_id, num_vars, spread):
         """Generates a dataset of synthetic templates based on the human seed."""
         if element_id not in self.seeds or not self.seeds[element_id]:
-            # Fallback: random 7D initialization — 7 to match the gestalt vector
-            base_seq = [[random.random() for _ in range(7)] for _ in range(8)]
+            # Fallback: random 8D initialization — 8 to match the gestalt vector
+            base_seq = [[random.random() for _ in range(8)] for _ in range(8)]
         else:
             base_seq = self.seeds[element_id]
 

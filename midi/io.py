@@ -18,9 +18,13 @@ class GhostNoteFilter:
         with self.lock:
             self.expected_echoes = {k: v for k, v in self.expected_echoes.items() if v > now}
             if msg.type in ['note_on', 'note_off'] and getattr(msg, 'note', -1) in self.expected_echoes:
-                if msg.type == 'note_on' and msg.velocity > 0:
-                    del self.expected_echoes[msg.note]
-                    return None 
+                is_note_off = (msg.type == 'note_off') or \
+                              (msg.type == 'note_on' and msg.velocity == 0)
+                if is_note_off:
+                    return None  # suppress echo note-off
+                # note_on with velocity > 0: consume the echo entry
+                del self.expected_echoes[msg.note]
+                return None
         return msg
 
 class MidiIO:
