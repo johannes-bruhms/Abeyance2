@@ -7,11 +7,15 @@ class PlaybackEngine:
         self.midi_io = midi_io
         self._timers = []
         self._lock = threading.Lock()
+        self.on_note_scheduled = []  # list of fn(note, velocity, duration_sec, delay_sec)
 
     def schedule_note(self, note, velocity, duration_sec, delay_sec=0.0):
         # Clamp note to valid MIDI range (0-127)
         safe_note = max(0, min(127, int(note)))
         safe_velocity = max(0, min(127, int(velocity)))
+
+        for cb in self.on_note_scheduled:
+            cb(safe_note, safe_velocity, duration_sec, delay_sec)
 
         def _play_task():
             self.midi_io.send_note_on(safe_note, safe_velocity)

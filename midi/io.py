@@ -6,25 +6,37 @@ from core.logger import log
 
 class GhostNoteFilter:
     def __init__(self, echo_ttl):
-        self.expected_echoes = {}  
+        # note → {'expiry': float, 'on_seen': bool}
+        # Entry stays alive until both note_on and note_off echoes are consumed.
+        self.expected_echoes = {}
         self.lock = threading.Lock()
         self.echo_ttl = echo_ttl
 
     def register_ai_note(self, note):
         with self.lock:
-            self.expected_echoes[note] = time.perf_counter() + self.echo_ttl
+            self.expected_echoes[note] = {
+                'expiry': time.perf_counter() + self.echo_ttl,
+                'on_seen': False,
+            }
 
     def filter_incoming(self, msg):
         now = time.perf_counter()
         with self.lock:
-            self.expected_echoes = {k: v for k, v in self.expected_echoes.items() if v > now}
+            # Prune expired entries
+            self.expected_echoes = {
+                k: v for k, v in self.expected_echoes.items()
+                if v['expiry'] > now
+            }
             if msg.type in ['note_on', 'note_off'] and getattr(msg, 'note', -1) in self.expected_echoes:
+                entry = self.expected_echoes[msg.note]
                 is_note_off = (msg.type == 'note_off') or \
                               (msg.type == 'note_on' and msg.velocity == 0)
                 if is_note_off:
-                    return None  # suppress echo note-off
-                # note_on with velocity > 0: consume the echo entry
-                del self.expected_echoes[msg.note]
+                    # Suppress echo note_off and remove the fully-consumed entry
+                    del self.expected_echoes[msg.note]
+                    return None
+                # note_on with velocity > 0: mark as seen, keep entry for note_off
+                entry['on_seen'] = True
                 return None
         return msg
 

@@ -7,8 +7,7 @@ ELEMENT_COLORS = {
     'b': '#0099ff',  # blue       — Vertical Density
     'c': '#ffee00',  # yellow     — Transposed Shapes
     'd': '#cc44ff',  # purple     — Oscillation
-    'e': '#44ff88',  # mint green — Sweeps
-    'f': '#ff4488',  # hot pink   — Extreme Registers
+    'e': '#ff4488',  # hot pink   — Extreme Registers
 }
 PENDING_COLOR = '#ff6600'   # amber: inside the current analysis window
 HUMAN_BASE    = '#ff3366'   # neon pink: human note, no detection

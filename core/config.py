@@ -8,6 +8,7 @@ CONFIG = {
     'ghost_echo_ttl': 3.0,
     'variations': 100,          # Synthetic clones per human seed
     'noise_spread': 0.05,       # Gaussian variance on synthetic clones
+    'hop_size_ms': 125,         # Analysis loop tick interval (window remains frame_size_ms)
     'agent_tick_ms': 100,       # Swarm loop tick interval (ms)
     # Affinity-based multi-gesture detection
     'affinity_sigma': 0.18,     # Gaussian kernel width — lower = sharper element discrimination
@@ -25,12 +26,11 @@ CONFIG = {
 # Per-element tunable model parameters.
 # Each element can be tuned independently via the GUI Elements tab.
 ELEMENT_PARAMS = {
-    'a': {'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
-    'b': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
-    'c': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
-    'd': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
-    'e': {'affinity_threshold': 0.42, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
-    'f': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.20, 'energy_decay': 0.05},
+    'a': {'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'b': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'c': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'd': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'e': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
 }
 
 ELEMENTS = {
@@ -38,43 +38,39 @@ ELEMENTS = {
     'b': 'Vertical Density',
     'c': 'Transposed Shapes',
     'd': 'Oscillation',
-    'e': 'Sweeps',
-    'f': 'Extreme Registers',
+    'e': 'Extreme Registers',
 }
 
 # Default element profiles
 # [density, polyphony, spread, variance, up_vel, down_vel, articulation, bimodality]
 # Used when no human seed has been recorded. Overridden automatically after recording.
 DEFAULT_CENTROIDS = {
-    'a': [0.50, 0.10, 0.20, 0.10, 0.70, 0.20, 0.50, 0.10],  # directional runs, moderate sustain
-    'b': [0.80, 0.80, 0.20, 0.20, 0.20, 0.20, 0.70, 0.10],  # dense chords, held, clustered register
+    'a': [0.60, 0.15, 0.45, 0.25, 0.70, 0.20, 0.35, 0.10],  # runs + sweeps, directional, moderate-wide spread
+    'b': [0.40, 0.90, 0.25, 0.15, 0.10, 0.10, 0.70, 0.10],  # chords: lowered density to match real 5-10 note chords
     'c': [0.40, 0.60, 0.65, 0.70, 0.35, 0.35, 0.25, 0.15],  # interval shapes transposing, high variance
-    'd': [0.45, 0.15, 0.30, 0.30, 0.60, 0.60, 0.20, 0.10],  # oscillation, staccato
-    'e': [0.80, 0.20, 0.70, 0.40, 0.65, 0.20, 0.15, 0.10],  # sweeps, very staccato, one direction
-    'f': [0.50, 0.70, 0.85, 0.80, 0.30, 0.30, 0.50, 0.85],  # simultaneous extreme registers, high bimodality
+    'd': [0.35, 0.10, 0.15, 0.10, 0.15, 0.15, 0.15, 0.50],  # trills/oscillation: up/down matches narrow trills, bimodality ~0.5
+    'e': [0.50, 0.70, 0.85, 0.80, 0.30, 0.30, 0.50, 0.85],  # simultaneous extreme registers, high bimodality
 }
 
 # Dimension importance weights per element
 # [density, polyphony, spread, variance, up_vel, down_vel, articulation, bimodality]
 AFFINITY_WEIGHTS = {
-    'a': [0.15, 0.10, 0.10, 0.10, 0.90, 0.90, 0.30, 0.05],  # direction-dominant: low density, high up/down
-    'b': [0.90, 0.90, 0.10, 0.10, 0.20, 0.20, 0.50, 0.10],  # density + polyphony dominant
-    'c': [0.20, 0.80, 0.50, 0.90, 0.20, 0.20, 0.30, 0.20],  # variance dominant (0.80→0.90), low bimodality
-    'd': [0.40, 0.10, 0.30, 0.30, 0.90, 0.90, 0.60, 0.05],  # up/down velocity for oscillation
-    'e': [0.90, 0.15, 0.85, 0.40, 0.40, 0.40, 0.60, 0.05],  # spread + density dominant, reduced velocity overlap with A
-    'f': [0.30, 0.60, 0.80, 0.40, 0.10, 0.10, 0.30, 1.00],  # bimodality + spread dominant, separates from C
+    'a': [0.30, 0.10, 0.50, 0.20, 0.85, 0.85, 0.30, 0.05],  # direction-dominant + spread for sweeps
+    'b': [0.60, 0.90, 0.15, 0.10, 0.15, 0.15, 0.50, 0.10],  # polyphony-dominant, lowered density weight
+    'c': [0.20, 0.80, 0.50, 0.90, 0.20, 0.20, 0.30, 0.20],  # variance dominant, low bimodality
+    'd': [0.40, 0.10, 0.15, 0.15, 0.90, 0.90, 0.50, 0.05],  # up/down velocity for oscillation, low spread
+    'e': [0.30, 0.60, 0.80, 0.40, 0.10, 0.10, 0.30, 1.00],  # bimodality + spread dominant, separates from C
 }
 
-# Per-element EMA alpha: fast (0.35) for transient gestures, slow (0.15) for sustained states
+# Per-element EMA alpha (8Hz scoring rate — raised from recalibrated values for faster live response)
 EMA_ALPHAS = {
-    'a': 0.35,  # transient directional events
-    'b': 0.25,  # sustained dense texture (raised from 0.15 for faster chord response)
-    'c': 0.35,  # transient leap events
-    'd': 0.35,  # transient oscillation
-    'e': 0.35,  # transient sweep
-    'f': 0.20,  # moderate — extreme register playing tends to sustain but shifts
+    'a': 0.30,  # transient directional events — fast response
+    'b': 0.25,  # chords — raised for 2-3 frame activation
+    'c': 0.30,  # transient leap events
+    'd': 0.30,  # transient oscillation/trills
+    'e': 0.20,  # extreme registers — slightly slower (sustained gestures)
 }
 
 # Element pairs that are acoustically contradictory and cannot co-occur.
 # When both score above threshold, the lower-confidence one is suppressed.
-MUTUAL_EXCLUSION = [('a', 'd'), ('a', 'c'), ('c', 'e'), ('d', 'e')]
+MUTUAL_EXCLUSION = [('a', 'c')]

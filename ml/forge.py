@@ -23,6 +23,18 @@ class GestureForge:
                     if len(vec) < GESTALT_DIM:
                         frames[i] = vec + [0.0] * (GESTALT_DIM - len(vec))
                         migrated = True
+            # Migrate taxonomy: remove old 'e' (Sweeps), rename 'f' → 'e'
+            if 'e' in data and 'f' in data:
+                del data['e']
+                data['e'] = data.pop('f')
+                migrated = True
+            elif 'e' in data and 'f' not in data:
+                # Old 'e' exists but no 'f' — just remove old Sweeps data
+                del data['e']
+                migrated = True
+            elif 'f' in data:
+                data['e'] = data.pop('f')
+                migrated = True
             if migrated:
                 with open(self.seed_file, 'w') as f:
                     json.dump(data, f, indent=4)

@@ -7,20 +7,20 @@ from core.config import (
 )
 
 
-class HybridGestaltDTW:
+class GestaltAffinityScorer:
     """
     Affinity-based multi-label gesture scorer for polyphonic piano playing.
 
-    Computes per-element feature-space proximity on every 250ms frame using the
-    live 8D gestalt vector. Multiple elements can score above threshold
-    simultaneously, allowing the system to detect overlapping gestures — e.g.
-    dense left-hand chords (Element B) while the right hand sweeps (Element E).
+    Computes per-element feature-space proximity on every 125ms hop (250ms
+    sliding window) using the live 8D gestalt vector. Multiple elements can
+    score above threshold simultaneously, allowing the system to detect
+    overlapping gestures — e.g. dense left-hand chords (Element B) while the
+    right hand sweeps (Element E).
 
-    Detection pipeline per frame:
+    Detection pipeline per hop:
       1. Compute weighted Gaussian affinity between the live 8D vector and each
          element's profile (centroid in feature space).
-      2. Apply per-element EMA smoothing (fast alpha for transient gestures,
-         slow alpha for sustained states).
+      2. Apply per-element EMA smoothing (alphas calibrated for 8 updates/sec).
       3. Apply mutual-exclusion logic to suppress acoustically contradictory pairs.
       4. Return the full {element_id: confidence} dict — all values, not just winners.
     """
@@ -53,7 +53,7 @@ class HybridGestaltDTW:
 
     def push_frame(self, vector_8d):
         self.rolling_window.append(np.asarray(vector_8d, dtype=float))
-        if len(self.rolling_window) > 4:   # ~1 second of history for note-gate check
+        if len(self.rolling_window) > 8:   # ~1 second of history at 8Hz for note-gate check
             self.rolling_window.pop(0)
 
     def score_all(self):
@@ -67,12 +67,12 @@ class HybridGestaltDTW:
             return dict(self._ema)
 
         # Note-gate: don't inject new scores during true silence between phrases.
-        recent_density = float(np.mean([v[0] for v in self.rolling_window[-2:]]))
+        recent_density = float(np.mean([v[0] for v in self.rolling_window[-4:]]))
         if recent_density < CONFIG['silence_density_gate']:
             # Silence: decay EMA aggressively so phantom activations don't
             # persist across multiple frames after notes stop.
             for label in self._ema:
-                self._ema[label] *= 0.25
+                self._ema[label] *= 0.50
             return dict(self._ema)
 
         v = self.rolling_window[-1]
@@ -95,12 +95,16 @@ class HybridGestaltDTW:
 
         scores = dict(self._ema)
 
-        # Mutual exclusion: suppress the lower-confidence partner in contradictory pairs
+        # Mutual exclusion: suppress the lower-confidence partner in contradictory pairs.
+        # Decay the suppressed element's EMA directly to prevent hidden accumulation
+        # that would cause jittery activation when dominance flips.
         for el_a, el_b in MUTUAL_EXCLUSION:
             if el_a in scores and el_b in scores:
                 if scores[el_a] < scores[el_b]:
                     scores[el_a] = 0.0
+                    self._ema[el_a] *= 0.55
                 else:
                     scores[el_b] = 0.0
+                    self._ema[el_b] *= 0.55
 
         return scores

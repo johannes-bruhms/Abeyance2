@@ -82,10 +82,6 @@ class ParasiteSwarm:
         deviation = vel - center
         return _clamp_vel(center + deviation * 1.5)
 
-    def _map_vel_escalating(self, vel):
-        """E — Escalating: always respond slightly louder than input."""
-        return _clamp_vel(vel + 20)
-
     def _map_vel_averaged(self, velocities):
         """F — Averaged: mean of all input velocities."""
         if not velocities:
@@ -101,7 +97,6 @@ class ParasiteSwarm:
             'c': self._attack_c,
             'd': self._attack_d,
             'e': self._attack_e,
-            'f': self._attack_f,
         }
         handler = dispatch.get(label)
         if handler:
@@ -184,33 +179,6 @@ class ParasiteSwarm:
         agent['energy'] -= 0.35
 
     def _attack_e(self, agent):
-        """Sweeps — Reverse sweep: play detected range back in opposite direction, escalating."""
-        recent = list(agent['stomach'])[-6:]
-        if len(recent) < 2:
-            return
-        pitches = [p for p, v in recent]
-        velocities = [v for p, v in recent]
-        mean_vel = sum(velocities) / len(velocities)
-        # Build a reversed chromatic sweep across the detected range
-        lo, hi = min(pitches), max(pitches)
-        direction = pitches[-1] - pitches[0]
-        if direction >= 0:
-            # Input was ascending → respond descending
-            sweep_notes = list(range(hi, lo - 1, -3))  # chromatic thirds down
-        else:
-            # Input was descending → respond ascending
-            sweep_notes = list(range(lo, hi + 1, 3))    # chromatic thirds up
-        # Limit sweep length
-        sweep_notes = sweep_notes[:8]
-        for i, pitch in enumerate(sweep_notes):
-            out_vel = self._map_vel_escalating(mean_vel)
-            self.playback.schedule_note(
-                _clamp_note(pitch), out_vel,
-                duration_sec=0.12,
-                delay_sec=i * 0.05)
-        agent['energy'] -= 0.35
-
-    def _attack_f(self, agent):
         """Extreme Registers — Fill the gap: respond in the middle register the performer avoids."""
         recent = list(agent['stomach'])[-6:]
         if not recent:

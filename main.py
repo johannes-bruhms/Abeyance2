@@ -1,4 +1,5 @@
 # main.py
+import os
 import tkinter as tk
 import threading
 import time
@@ -8,15 +9,17 @@ from core.gestalt import extract_micro_gestalt
 from core.logger import log
 from midi.io import MidiIO, GhostNoteFilter
 from midi.playback import PlaybackEngine
-from ml.classifier import HybridGestaltDTW
+from ml.classifier import GestaltAffinityScorer
 from agents.parasite import ParasiteSwarm
 from gui.app import AbeyanceGUI
+
+SESSION_DIR = 'sessions'
 
 class AbeyanceApp:
     def __init__(self):
         self.root = tk.Tk()
 
-        self.dtw          = HybridGestaltDTW()
+        self.dtw          = GestaltAffinityScorer()
         self.ghost_filter = GhostNoteFilter(CONFIG['ghost_echo_ttl'])
 
         self.midi_io  = None
@@ -53,10 +56,16 @@ class AbeyanceApp:
         # Wire logger to GUI event log
         log.set_gui_callback(self.gui.log_msg)
 
+        # Graceful shutdown on window close
+        self.root.protocol("WM_DELETE_WINDOW", self._shutdown)
+
     # ------------------------------------------------------------------ MIDI
 
     def connect_midi(self, in_port_name, out_port_name):
         try:
+            # Close existing connections before creating new ones
+            self._close_midi()
+
             self.midi_io = MidiIO(
                 in_port_name, out_port_name, self.ghost_filter,
                 self._on_midi_in, self._on_cc_in,
@@ -64,9 +73,8 @@ class AbeyanceApp:
             )
             self.playback = PlaybackEngine(self.midi_io)
 
-            # Hook: route AI note visuals with correct timing and duration
-            original_schedule = self.playback.schedule_note
-            def hooked_schedule(note, velocity, duration_sec, delay_sec=0.0):
+            # Route AI note visuals via callback (no monkey-patching)
+            def _on_ai_note(note, velocity, duration_sec, delay_sec):
                 delay_ms = int(delay_sec * 1000)
                 dur_ms   = int(duration_sec * 1000)
                 self.root.after(delay_ms,
@@ -75,14 +83,34 @@ class AbeyanceApp:
                 self.root.after(delay_ms + dur_ms,
                                 self.gui.piano_roll.release_note,
                                 note, True)
-                original_schedule(note, velocity, duration_sec, delay_sec)
-            self.playback.schedule_note = hooked_schedule
+            self.playback.on_note_scheduled.append(_on_ai_note)
 
             self.swarm = ParasiteSwarm(ELEMENTS, self.playback)
             return True
         except Exception as e:
             log.error(f"Failed to connect MIDI: {e}", exc=True)
             return False
+
+    def _close_midi(self):
+        """Close existing MIDI ports and stop the swarm."""
+        if self.swarm:
+            self.swarm.running = False
+            self.swarm = None
+        if self.playback:
+            self.playback.cancel_all()
+            self.playback = None
+        if self.midi_io:
+            if self.midi_io.inport:
+                try:
+                    self.midi_io.inport.close()
+                except Exception:
+                    pass
+            if self.midi_io.outport:
+                try:
+                    self.midi_io.outport.close()
+                except Exception:
+                    pass
+            self.midi_io = None
 
     def _on_midi_in(self, note, velocity):
         now = time.perf_counter()
@@ -101,7 +129,7 @@ class AbeyanceApp:
             if self.note_on_times[note]:
                 onset = self.note_on_times[note].pop(0)  # FIFO: oldest note-on first
                 duration = now - onset
-                self.completed_durations.append(duration)
+                self.completed_durations.append((now, duration))
                 if self.recording:
                     self.recording_raw_durations.append((now, duration))
 
@@ -109,6 +137,20 @@ class AbeyanceApp:
         is_down = value > 63
         if self.swarm:
             self.swarm.set_pedal(is_down)
+
+    def _shutdown(self):
+        """Graceful shutdown: stop analysis, close MIDI ports, destroy window."""
+        self.analysis_running = False
+        self._close_midi()
+        log.info("Shutting down.")
+        self.root.destroy()
+
+    # --------------------------------------------------------- controller API
+
+    def clear_element_seed(self, el_id, variations, noise_spread):
+        """Clear recorded seed data for an element and revert to default profile."""
+        self.dtw.forge.clear_seed(el_id)
+        self.dtw.update_element(el_id, int(variations), float(noise_spread))
 
     # --------------------------------------------------------------- analysis
 
@@ -137,8 +179,9 @@ class AbeyanceApp:
         if not log_snapshot:
             return
         import json, datetime
+        os.makedirs(SESSION_DIR, exist_ok=True)
         ts   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        path = f'session_{ts}.json'
+        path = os.path.join(SESSION_DIR, f'session_{ts}.json')
         try:
             with open(path, 'w') as f:
                 json.dump(log_snapshot, f, indent=2)
@@ -148,30 +191,41 @@ class AbeyanceApp:
             log.error(f'Could not save session log: {e}', exc=True)
 
     def _analysis_loop(self):
+        hop_sec    = CONFIG['hop_size_ms'] / 1000.0
+        window_sec = CONFIG['frame_size_ms'] / 1000.0
+
         while self.analysis_running:
-            frame_sec  = CONFIG['frame_size_ms'] / 1000.0
             start_time = time.perf_counter()
 
             frame_id = self.current_frame_id
             self.current_frame_id += 1
 
+            window_start = start_time - window_sec
+
             with self.lock:
-                notes_to_process    = list(self.current_frame_notes)
-                durations_this_frame = list(self.completed_durations)
-                self.current_frame_notes   = []
-                self.completed_durations   = []
+                # Window: keep notes within trailing 250ms
+                notes_in_window = [n for n in self.current_frame_notes
+                                   if n[2] >= window_start]
+                durations_in_window = [d for ts, d in self.completed_durations
+                                       if ts >= window_start]
+                # Prune old entries (>2× window) to bound memory
+                cutoff = start_time - 2 * window_sec
+                self.current_frame_notes = [n for n in self.current_frame_notes
+                                            if n[2] >= cutoff]
+                self.completed_durations = [(ts, d) for ts, d in self.completed_durations
+                                            if ts >= cutoff]
 
             # Split frame data: (pitch, timestamp) for gestalt, (pitch, velocity) for swarm
-            notes_for_gestalt = [(n[0], n[2]) for n in notes_to_process]
-            notes_for_swarm   = [(n[0], n[1]) for n in notes_to_process]  # (pitch, velocity)
+            notes_for_gestalt = [(n[0], n[2]) for n in notes_in_window]
+            notes_for_swarm   = [(n[0], n[1]) for n in notes_in_window]  # (pitch, velocity)
 
             # 8D gestalt vector — dynamics-neutral (velocity not included)
-            vector_8d = extract_micro_gestalt(notes_for_gestalt, durations_this_frame)
+            vector_8d = extract_micro_gestalt(notes_for_gestalt, durations_in_window)
             self.dtw.push_frame(vector_8d)
 
             if self.recording:
                 self.recording_frames.append(vector_8d)
-                self.recording_frame_times.append((start_time, start_time + frame_sec))
+                self.recording_frame_times.append((start_time, start_time + window_sec))
 
             scores = self.dtw.score_all()
 
@@ -181,7 +235,7 @@ class AbeyanceApp:
                 't':      t_rel,
                 'frame':  frame_id,
                 'scores': {k: round(v, 3) for k, v in scores.items()},
-                'notes':  [n[0] for n in notes_to_process],
+                'notes':  [n[0] for n in notes_in_window],
             }
             with self.lock:
                 self.session_log.append(log_entry)
@@ -202,8 +256,8 @@ class AbeyanceApp:
                 log.debug(status_msg)
                 self.gui.root.after(0, self.gui.status_var.set, status_msg)
 
-            elapsed    = time.perf_counter() - start_time
-            time.sleep(max(0, frame_sec - elapsed))
+            elapsed = time.perf_counter() - start_time
+            time.sleep(max(0, hop_sec - elapsed))
 
     # -------------------------------------------------------------- recording
 
@@ -243,6 +297,7 @@ class AbeyanceApp:
             # Compute them inline from raw notes, chunked into frame_size_ms windows.
             # Include durations for the articulation dimension.
             if not frames and raw_notes:
+                hop_sec   = CONFIG['hop_size_ms'] / 1000.0
                 frame_sec = CONFIG['frame_size_ms'] / 1000.0
                 t = raw_notes[0][1]
                 t_end = raw_notes[-1][1] + frame_sec
@@ -251,7 +306,7 @@ class AbeyanceApp:
                     dur_chunk = [d for ts_off, d in raw_durations if t <= ts_off < t + frame_sec]
                     frames.append(extract_micro_gestalt(chunk, dur_chunk))
                     frame_times.append((t, t + frame_sec))
-                    t += frame_sec
+                    t += hop_sec
 
             # Strip near-silent frames (density < 0.05 ≈ fewer than 2 notes per 250ms).
             # Silence before/after/between gestures drags the centroid toward zero.

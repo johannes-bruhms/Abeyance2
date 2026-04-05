@@ -13,12 +13,11 @@ BG_COL = '#1e1e1e'
 
 # Short gesture hints shown inside each Training column
 ELEMENT_HINTS = {
-    'a': 'Play smooth runs moving\nconsistently up OR down.\nScales, one-direction arpeggios.',
+    'a': 'Play directional motion:\nscales, arpeggios, glissandi,\nsweeps across the keyboard.',
     'b': 'Play dense simultaneous\nattacks: thick chords,\ntone clusters.',
     'c': 'Play an interval or chord shape\n(e.g. octave, 5th) then shift it\nrapidly to a different register.',
-    'd': 'Alternate rapidly between\ntwo pitch regions.\nTrils, tremolo figures.',
-    'e': 'Sweep fast across a wide\npitch range. Glissandi,\nrapid scale passages.',
-    'f': 'Play simultaneously in the\nhighest and lowest registers.\nBoth hands at extremes.',
+    'd': 'Alternate rapidly between\ntwo pitch regions.\nTrills, tremolo figures.',
+    'e': 'Play simultaneously in the\nhighest and lowest registers.\nBoth hands at extremes.',
 }
 
 
@@ -486,11 +485,10 @@ class AbeyanceGUI:
     def _clear_seed(self, el_id):
         """Clear all recorded seed data for el_id and reset to default profile."""
         ac = self.app_controller
-        ac.dtw.forge.clear_seed(el_id)
         vs = self.el_vars[el_id]
-        ac.dtw.update_element(el_id,
-                               int(vs['variations'].get()),
-                               float(vs['noise_spread'].get()))
+        ac.clear_element_seed(el_id,
+                              vs['variations'].get(),
+                              vs['noise_spread'].get())
         ws = self.el_widgets[el_id]
         vs['stat_seed'].set('No seed recorded')
         vs['stat_synth'].set('Synth: not generated')
@@ -523,13 +521,30 @@ class AbeyanceGUI:
         pitches = [n[0] for n in raw_notes]
         times   = [n[1] for n in raw_notes]
 
-        t_min, t_max = min(times), max(times)
         p_min, p_max = min(pitches), max(pitches)
-        t_range = max(t_max - t_min, 0.001)
         p_range = max(p_max - p_min, 1)
 
+        # Compress temporal gaps > 500ms so silence truncation is visible.
+        # Build a compressed time axis that closes large gaps.
+        gap_threshold = 0.5  # seconds
+        gap_replace   = 0.05  # compressed gap width
+        sorted_times = sorted(set(times))
+        compressed = 0.0
+        time_map = {}  # original time → compressed time
+        for i, t in enumerate(sorted_times):
+            if i > 0:
+                gap = t - sorted_times[i - 1]
+                if gap > gap_threshold:
+                    compressed += gap_replace
+                else:
+                    compressed += gap
+            time_map[t] = compressed
+
+        t_range = max(compressed, 0.001)
+
         for pitch, ts in raw_notes:
-            x = int((ts - t_min) / t_range * (w - pad * 2)) + pad
+            ct = time_map[ts]
+            x = int(ct / t_range * (w - pad * 2)) + pad
             y = int((1.0 - (pitch - p_min) / p_range) * (h - pad * 2)) + pad
             canvas.create_oval(x - 2, y - 2, x + 2, y + 2,
                                fill=el_color, outline='')
