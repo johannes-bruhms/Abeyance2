@@ -28,7 +28,7 @@ class AbeyanceGUI:
         self.root.title("Abeyance II - BCMI Interface")
         self.root.geometry("1200x720")
 
-        self.left_panel = tk.Frame(self.root, width=310, padx=12, pady=12, bg=BG)
+        self.left_panel = tk.Frame(self.root, width=210, padx=12, pady=12, bg=BG)
         self.left_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.left_panel.pack_propagate(False)   # children cannot resize the panel
 
@@ -313,7 +313,7 @@ class AbeyanceGUI:
         tk.Label(col, textvariable=vs['stat_model'], font=('Consolas', 8),
                  fg='#aaa', bg=BG_COL, anchor='w').pack(fill=tk.X, pady=(0, 8))
 
-        # Record + Clear buttons
+        # Record + Train + Clear buttons
         btn_row = tk.Frame(col, bg=BG_COL)
         btn_row.pack(fill=tk.X, pady=(0, 8))
         rec_btn = tk.Button(btn_row, text='REC',
@@ -321,6 +321,11 @@ class AbeyanceGUI:
                             bg='#880000', fg='white',
                             command=lambda e=el_id: self._toggle_recording(e))
         rec_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        train_btn = tk.Button(btn_row, text='TRAIN',
+                              font=('Helvetica', 9, 'bold'),
+                              bg='#005500', fg='white',
+                              command=lambda e=el_id: self._train_element(e))
+        train_btn.pack(side=tk.LEFT, padx=(4, 0), expand=True, fill=tk.X)
         clr_btn = tk.Button(btn_row, text='CLR',
                             font=('Helvetica', 8),
                             bg='#444444', fg='#aaaaaa',
@@ -355,6 +360,7 @@ class AbeyanceGUI:
             'status_lbl': status_lbl,
             'mini':       mini,
             'rec_btn':    rec_btn,
+            'train_btn':  train_btn,
         }
 
     def _make_el_param_slider(self, parent, el_id, label, param_key, from_, to, resolution):
@@ -459,13 +465,12 @@ class AbeyanceGUI:
         ws['dot'].config(bg=dot_color)
         self._rec_poll_id = self.root.after(200, self._poll_recording, el_id)
 
-    def update_training_ui(self, el_id, raw_notes, total_frames, synth_count):
-        """Called by main.py after a recording iteration stops and templates are forged."""
+    def update_recording_ui(self, el_id, raw_notes, total_frames):
+        """Called by main.py after a recording take stops (seed saved, not yet trained)."""
         if el_id not in self.el_vars:
             return
         vs = self.el_vars[el_id]
         ws = self.el_widgets[el_id]
-        el_color = ELEMENT_COLORS.get(el_id, '#ffffff')
 
         # Accumulate notes across takes for the mini canvas
         self.el_accumulated_notes[el_id].extend(raw_notes)
@@ -473,11 +478,11 @@ class AbeyanceGUI:
         takes = self.el_take_count[el_id]
 
         vs['stat_seed'].set(f'Seed: {total_frames} frames ({takes} take{"s" if takes != 1 else ""})')
-        vs['stat_synth'].set(f'Synth: {synth_count} variations forged')
-        vs['stat_model'].set('Model: trained on human seed')
+        vs['stat_synth'].set(f'Synth: needs training')
+        vs['stat_model'].set('Model: needs training')
 
-        ws['dot'].config(bg=el_color)
-        ws['status_lbl'].config(text='Trained', fg=el_color)
+        ws['dot'].config(bg='#ff8800')
+        ws['status_lbl'].config(text='Untrained', fg='#ff8800')
 
         # Show ALL accumulated notes, not just the last take
         self._draw_mini_midi(el_id, self.el_accumulated_notes[el_id])
@@ -504,6 +509,29 @@ class AbeyanceGUI:
                          font=('Consolas', 8), tags='placeholder')
         log.info(f'Seed cleared for: {el_id.upper()} — reverting to default profile.', element=el_id)
 
+    def _train_element(self, el_id):
+        """Forge synthetic data and retrain the model for one element."""
+        ac = self.app_controller
+        vs = self.el_vars[el_id]
+        ws = self.el_widgets[el_id]
+        el_color = ELEMENT_COLORS.get(el_id, '#ffffff')
+
+        total_seed = len(ac.dtw.forge.seeds.get(el_id, []))
+        if total_seed == 0:
+            log.warn(f'No seed data for {ELEMENTS[el_id]} — record some takes first.', element=el_id)
+            return
+
+        n_vars = ac.train_element(
+            el_id,
+            vs['variations'].get(),
+            vs['noise_spread'].get(),
+        )
+
+        vs['stat_synth'].set(f'Synth: {n_vars} variations forged')
+        vs['stat_model'].set('Model: trained on human seed')
+        ws['dot'].config(bg=el_color)
+        ws['status_lbl'].config(text='Trained', fg=el_color)
+
     def _draw_mini_midi(self, el_id, raw_notes):
         canvas = self.el_widgets[el_id]['mini']
         canvas.delete('all')
@@ -521,8 +549,9 @@ class AbeyanceGUI:
         pitches = [n[0] for n in raw_notes]
         times   = [n[1] for n in raw_notes]
 
-        p_min, p_max = min(pitches), max(pitches)
-        p_range = max(p_max - p_min, 1)
+        # Always show full MIDI range so no notes are cut off
+        p_min, p_max = 0, 127
+        p_range = 127
 
         # Compress temporal gaps > 500ms so silence truncation is visible.
         # Build a compressed time axis that closes large gaps.

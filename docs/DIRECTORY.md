@@ -36,8 +36,8 @@ abeyance2/
 │
 ├── gui/
 │   ├── __init__.py
-│   ├── app.py                 # AbeyanceGUI — control panel, training dashboard, event log,
-│   │                          #   confidence timeline, live recording feedback
+│   ├── app.py                 # AbeyanceGUI — control panel, training dashboard (separate
+│   │                          #   REC/TRAIN/CLR workflow), event log, confidence timeline
 │   └── piano_roll.py          # PianoRollCanvas — scrolling visualization with element colors
 │
 ├── tests/

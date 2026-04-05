@@ -116,18 +116,21 @@ Previously included a↔d (removed 2026-04-05 to allow oscillation/trills to act
 - **`midi/io.py`** (`GhostNoteFilter`): TTL-based dict of AI-generated note fingerprints. Tracks each echo entry until both `note_on` and `note_off` are consumed, preventing feedback loops.
 - **`agents/parasite.py`** (`ParasiteSwarm`): 5 independent agents (one per element). Each has `energy` (0.0–1.0) and a `stomach` deque of `(pitch, velocity)` tuples. Energy rises per recognized motif, decays per tick, triggers element-specific `_attack_*` handlers when > `CONFIG['energy_trigger']` (0.6). Each handler implements a distinct response behavior and dynamic mapping.
 - **`midi/playback.py`** (`PlaybackEngine`): Non-blocking scheduled note output using `threading.Timer`. Provides `on_note_scheduled` callback list for visual hooks. Tracks all active timers; `cancel_all()` silences the swarm instantly.
-- **`gui/app.py`** (`AbeyanceGUI`): Tkinter GUI with left control panel, live piano roll, confidence timeline, per-element training dashboard (with live recording feedback, take accumulation, silence stripping, gap-compressed mini canvas), and event log.
+- **`gui/app.py`** (`AbeyanceGUI`): Tkinter GUI with left control panel, live piano roll, confidence timeline, per-element training dashboard (with live recording feedback, take accumulation, silence stripping, gap-compressed mini canvas with fixed full MIDI range, separate TRAIN button for on-demand forging/retraining), and event log.
 - **`gui/piano_roll.py`** (`PianoRollCanvas`): Scrolling piano roll with per-element color coding, confidence-proportional horizontal bands, and fading detection labels.
 
 ## Recording / Training Workflow
 
+Recording and training are **separate steps** — recording accumulates seed data without retraining, so you can batch many takes before forging synthetic data.
+
 1. Connect MIDI ports in the left panel.
 2. Go to the **Elements** tab — each element has its own column.
-3. Press **REC** → play the gesture → press **STOP**. Silent frames (density < 0.05) are automatically stripped. The mini MIDI canvas compresses temporal gaps to visually confirm truncation.
-4. Repeat for more takes — data **accumulates** across REC/STOP cycles. The mini canvas shows all accumulated notes; stats show take count and total frames.
-5. Adjust **Variations** and **Noise Spread** per element before or after recording.
-6. Press **CLR** to reset an element to its default profile.
-7. **Start Analysis** to begin live classification and swarm response.
+3. Press **REC** → play the gesture → press **STOP**. Silent frames (density < 0.05) are automatically stripped. The mini MIDI canvas (fixed full MIDI range 0–127) compresses temporal gaps to visually confirm truncation.
+4. Repeat for more takes — data **accumulates** across REC/STOP cycles. The mini canvas shows all accumulated notes; stats show take count and total frames. Status shows "Untrained" in orange until the model is trained.
+5. Adjust **Variations** and **Noise Spread** per element.
+6. Press **TRAIN** to forge synthetic variations and retrain the model. Can be re-run with different synth params without re-recording.
+7. Press **CLR** to reset an element to its default profile.
+8. **Start Analysis** to begin live classification and swarm response.
 
 ## Classifier Tuning Rationale
 

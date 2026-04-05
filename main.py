@@ -152,6 +152,18 @@ class AbeyanceApp:
         self.dtw.forge.clear_seed(el_id)
         self.dtw.update_element(el_id, int(variations), float(noise_spread))
 
+    def train_element(self, el_id, variations, noise_spread):
+        """Re-forge synthetic data and retrain the model for one element."""
+        n_vars = int(variations)
+        n_spread = float(noise_spread)
+        self.dtw.update_element(el_id, n_vars, n_spread)
+        total_seed = len(self.dtw.forge.seeds.get(el_id, []))
+        log.info(
+            f"Trained {ELEMENTS[el_id]}: {total_seed} seed frames "
+            f"→ {n_vars} synthetic variations (σ={n_spread})",
+            element=el_id)
+        return n_vars
+
     # --------------------------------------------------------------- analysis
 
     def start_analysis(self):
@@ -333,14 +345,13 @@ class AbeyanceApp:
             if frames:
                 frame_list = [v.tolist() for v in frames]
                 self.dtw.forge.add_human_seed(target, frame_list)
-                self.dtw.update_element(target, n_vars, n_spread)
                 total_seed_frames = len(self.dtw.forge.seeds.get(target, []))
                 strip_msg = f' ({stripped} silent frames removed)' if stripped else ''
                 log.info(
                     f"+{len(frames)} frames → {ELEMENTS[target]}{strip_msg} "
                     f"| seed total: {total_seed_frames} frames",
                     element=target)
-                self.gui.update_training_ui(target, surviving_notes, total_seed_frames, n_vars)
+                self.gui.update_recording_ui(target, surviving_notes, total_seed_frames)
             else:
                 log.warn(
                     f"No active frames captured ({stripped} silent frames removed) "
