@@ -115,10 +115,10 @@ Previously included a↔d (removed 2026-04-05 to allow oscillation/trills to act
 - **`core/config.py`**: All global tuning constants — frame size, hop size, energy thresholds, ghost echo TTL, gestalt parameters, per-element model params. Single source of truth for all magic numbers.
 - **`core/gestalt.py`**: `extract_micro_gestalt()` — 8D feature extraction from raw MIDI. Dynamics-neutral.
 - **`core/logger.py`**: Centralized logging singleton. `from core.logger import log` then `log.info(...)`, `log.warn(...)`, `log.error(..., exc=True)`. Writes to `abeyance.log` (auto-rotates at 1MB) and GUI event log.
-- **`ml/classifier.py`** (`GestaltAffinityScorer`): Multi-label scorer with two scoring backends. On each 125ms hop, scores each element using its own `frame_size_ms` window: **affinity mode** computes 8D gestalt distance to the trained centroid; **chord mode** counts near-simultaneous note onsets (rule-based, no training required). Both modes feed into per-element EMA smoothing and mutual-exclusion suppression. Multiple elements can be active simultaneously.
+- **`ml/classifier.py`** (`GestaltAffinityScorer`): Multi-label scorer with two scoring backends. On each 125ms hop, scores each element using its own `frame_size_ms` window: **affinity mode** computes 8D gestalt distance to the trained centroid; **chord mode** counts near-simultaneous note onsets (rule-based, no training required). Both modes feed into per-element EMA smoothing and mutual-exclusion suppression. Multiple elements can be active simultaneously. `score_all()` returns a diagnostic dict with `scores`, `raw_scores` (pre-EMA), `vectors` (per-element 8D gestalt), `silence_gated`, and `suppressed` (mutual exclusion events).
 - **`ml/forge.py`** (`GestureForge`): Bootstraps training data from `human_seeds.json` by generating Gaussian-perturbed synthetic variants per element. Seed data accumulates across multiple recording takes. Automatically migrates old 6-element seed keys (f→e) on load.
 - **`midi/io.py`** (`GhostNoteFilter`): TTL-based dict of AI-generated note fingerprints. Tracks each echo entry until both `note_on` and `note_off` are consumed, preventing feedback loops.
-- **`agents/parasite.py`** (`ParasiteSwarm`): 5 independent agents (one per element). Each has `energy` (0.0–1.0) and a `stomach` deque of `(pitch, velocity)` tuples. Energy rises per recognized motif, decays per tick, triggers element-specific `_attack_*` handlers when > `CONFIG['energy_trigger']` (0.6). Each handler implements a distinct response behavior and dynamic mapping.
+- **`agents/parasite.py`** (`ParasiteSwarm`): 5 independent agents (one per element). Each has `energy` (0.0–1.0) and a `stomach` deque of `(pitch, velocity)` tuples. Energy rises per recognized motif, decays per tick, triggers element-specific `_attack_*` handlers when > `CONFIG['energy_trigger']` (0.6). Each handler implements a distinct response behavior and dynamic mapping. Provides `on_attack` callback list and `get_energy_snapshot()` for session logging.
 - **`midi/playback.py`** (`PlaybackEngine`): Non-blocking scheduled note output using `threading.Timer`. Provides `on_note_scheduled` callback list for visual hooks. Tracks all active timers; `cancel_all()` silences the swarm instantly.
 - **`gui/app.py`** (`AbeyanceGUI`): Tkinter GUI with left control panel, live piano roll, confidence timeline, per-element training dashboard (with live recording feedback, take accumulation, silence stripping, gap-compressed mini canvas with fixed full MIDI range, separate TRAIN button for on-demand forging/retraining), and event log.
 - **`gui/piano_roll.py`** (`PianoRollCanvas`): Scrolling piano roll with winner-takes-all element color coding (highest-confidence element), live confidence bar chart overlay (top-right), color legend (bottom), and fading detection labels.
@@ -154,9 +154,56 @@ Per-element frame sizes and chord scoring mode added on 2026-04-05 to match each
 | `d` Oscillation | 500 | up/down 0.90, spread 0.15 (lowered) | 0.35 | 0.30 | Long window captures multiple back-and-forth oscillation cycles |
 | `e` Extreme Registers | 350 | bimodality 1.00 + spread 0.80 | 0.35 | 0.20 | Bimodality is the decisive separator from C |
 
-## Known Limitations
+## Session Log Format
 
-- Session logs (`session_*.json`) are saved to the `sessions/` directory during analysis sessions.
+Session logs (`sessions/session_*.json`) use **event-driven logging** — frames are only recorded when something meaningful changes (element activates/deactivates, score shifts >0.1, silence gate or pedal transitions, mutual exclusion fires). During steady-state active play, a compact heartbeat is logged every ~1 second. This typically reduces output by 80–90% vs full-rate logging.
+
+The file has four top-level sections:
+
+- **`metadata`** — config/param snapshots, trained profiles, session timing
+- **`summary`** — aggregate statistics for LLM analysis (read this first)
+- **`frames`** — event-driven frame log (detailed diagnostic data)
+- **`attacks`** — swarm attack events with full input/output
+
+### Summary block (designed for LLM consumption)
+
+```json
+"summary": {
+  "duration_sec": 42.5,
+  "total_hops": 340,
+  "silence_pct": 12.3,
+  "pedal_changes": 5,
+  "elements": {
+    "a": {
+      "name": "Linear Velocity",
+      "activations": 8, "deactivations": 8,
+      "active_sec": 14.2, "active_pct": 33.4,
+      "mean_confidence": 0.62, "peak_confidence": 0.91,
+      "times_suppressed": 2
+    }
+  },
+  "overlaps": { "a+d": {"co_active_sec": 3.1, "co_active_pct": 7.3} },
+  "attacks": { "a": {"count": 4, "total_notes_out": 16} }
+}
+```
+
+### Frame types
+
+- **`event`** frames include `vectors` (8D gestalt, 2 decimal), `notes`, `velocities`, and change markers (`activated`, `deactivated`, `silence_gated`, `suppressed`, `pedal`). Only fields that changed are present.
+- **`heartbeat`** frames include only `scores`, `raw`, and `energy` — compact status snapshots during stable play.
+
+### Attack events
+
+```json
+{
+  "t": 3.45, "element": "a", "mapping": "compressed",
+  "input": [[60, 80], [64, 72]],
+  "output": [{"note": 48, "vel": 54, "dur": 0.4, "delay": 0.0}],
+  "energy_before": 0.65, "energy_after": 0.35
+}
+```
+
+## Known Limitations
 - The `templates` dict in the classifier is retained for potential future use but is not currently used for scoring (profiles/centroids are used instead).
 
 ## Documentation

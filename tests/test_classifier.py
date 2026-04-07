@@ -27,20 +27,33 @@ class TestGestaltAffinityScorer(unittest.TestCase):
 
     def test_score_all_returns_all_elements(self):
         notes = [(60, 0.0), (64, 0.05), (67, 0.10)]
-        scores = self.scorer.score_all(notes, [], 0.25)
-        self.assertEqual(set(scores.keys()), set(ELEMENTS.keys()))
+        result = self.scorer.score_all(notes, [], 0.25)
+        self.assertEqual(set(result['scores'].keys()), set(ELEMENTS.keys()))
+
+    def test_score_all_returns_diagnostics(self):
+        notes = [(60, 0.0), (64, 0.05), (67, 0.10)]
+        result = self.scorer.score_all(notes, [], 0.25)
+        self.assertIn('raw_scores', result)
+        self.assertIn('vectors', result)
+        self.assertIn('silence_gated', result)
+        self.assertIn('suppressed', result)
+        self.assertFalse(result['silence_gated'])
+        # Vectors should have entries for affinity-mode elements
+        for el_id in ELEMENTS:
+            if ELEMENT_PARAMS[el_id].get('scoring_mode') != 'chord':
+                self.assertEqual(len(result['vectors'][el_id]), 8)
 
     def test_scores_in_valid_range(self):
         notes = _make_notes_from_centroid(DEFAULT_CENTROIDS['a'], t_base=0.0)
-        scores = self.scorer.score_all(notes, [], 0.25)
-        for label, score in scores.items():
+        result = self.scorer.score_all(notes, [], 0.25)
+        for label, score in result['scores'].items():
             self.assertGreaterEqual(score, 0.0, f"{label} below 0")
             self.assertLessEqual(score, 1.0, f"{label} above 1")
 
     def test_no_notes_returns_ema_state(self):
-        scores = self.scorer.score_all(None, None, None)
+        result = self.scorer.score_all(None, None, None)
         for label in ELEMENTS:
-            self.assertEqual(scores[label], 0.0)
+            self.assertEqual(result['scores'][label], 0.0)
 
     def test_internal_ema_builds_with_repeated_scoring(self):
         """Every element's internal EMA should build up when fed matching notes."""
@@ -62,10 +75,11 @@ class TestGestaltAffinityScorer(unittest.TestCase):
         # Now score with no recent notes (current_time far past the notes)
         for i in range(10):
             self.scorer.score_all(notes, [], 5.0 + i * 0.125)
-        post_scores = self.scorer.score_all(notes, [], 7.0)
+        result = self.scorer.score_all(notes, [], 7.0)
 
+        self.assertTrue(result['silence_gated'])
         for label in ELEMENTS:
-            self.assertLess(post_scores[label], 0.05,
+            self.assertLess(result['scores'][label], 0.05,
                             f"{label} didn't decay to near-zero during silence")
 
     def test_mutual_exclusion_suppresses_lower(self):
@@ -75,10 +89,9 @@ class TestGestaltAffinityScorer(unittest.TestCase):
         for i in range(20):
             t = 0.25 + i * 0.125
             self.scorer.score_all(notes, [], t)
-        scores = self.scorer.score_all(notes, [], 0.25 + 20 * 0.125)
+        result = self.scorer.score_all(notes, [], 0.25 + 20 * 0.125)
+        scores = result['scores']
         for el_a, el_b in MUTUAL_EXCLUSION:
-            # Both can be near-zero (neither activated), but both meaningfully
-            # active is a failure.  Use 0.01 threshold to ignore float dust.
             both_active = scores[el_a] > 0.01 and scores[el_b] > 0.01
             self.assertFalse(both_active,
                              f"Mutual exclusion failed: {el_a}={scores[el_a]:.4f}, "

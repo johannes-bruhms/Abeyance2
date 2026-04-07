@@ -32,6 +32,7 @@ class GestaltAffinityScorer:
         self.templates = {}    # time-series templates (kept for potential future use)
         self.profiles = {}     # (8,) feature profile per element — the affinity target
         self._ema = {k: 0.0 for k in ELEMENTS}
+        self._last_vectors = {}  # populated by _score_affinity for diagnostics
 
         self.load_all_from_forge()
 
@@ -64,10 +65,23 @@ class GestaltAffinityScorer:
             current_time: float, the current timestamp for windowing.
 
         Returns:
-            {element_id: confidence} dict — all values, not just winners.
+            dict with keys:
+                'scores': {element_id: confidence} — post-EMA, post-mutual-exclusion
+                'raw_scores': {element_id: float} — pre-EMA raw affinity/chord scores
+                'vectors': {element_id: list[float]} — per-element 8D gestalt vectors
+                'silence_gated': bool — True if the silence gate fired this hop
+                'suppressed': list[str] — element IDs suppressed by mutual exclusion
         """
+        result = {
+            'scores': dict(self._ema),
+            'raw_scores': {},
+            'vectors': {},
+            'silence_gated': False,
+            'suppressed': [],
+        }
+
         if notes_with_times is None or current_time is None:
-            return dict(self._ema)
+            return result
 
         # Silence gate: check if there are any recent notes (within 1 second)
         one_sec_ago = current_time - 1.0
@@ -75,7 +89,9 @@ class GestaltAffinityScorer:
         if len(recent_notes) < 2:
             for label in self._ema:
                 self._ema[label] *= 0.50
-            return dict(self._ema)
+            result['scores'] = dict(self._ema)
+            result['silence_gated'] = True
+            return result
 
         durations = completed_durations or []
 
@@ -90,6 +106,9 @@ class GestaltAffinityScorer:
             else:
                 raw[label] = self._score_affinity(notes_with_times, durations,
                                                   current_time, label, profile)
+
+        result['raw_scores'] = dict(raw)
+        result['vectors'] = {k: v.tolist() for k, v in self._last_vectors.items()}
 
         # Apply per-element EMA smoothing
         for label, score in raw.items():
@@ -106,11 +125,14 @@ class GestaltAffinityScorer:
                 if scores[el_a] < scores[el_b]:
                     scores[el_a] = 0.0
                     self._ema[el_a] *= 0.55
+                    result['suppressed'].append(el_a)
                 else:
                     scores[el_b] = 0.0
                     self._ema[el_b] *= 0.55
+                    result['suppressed'].append(el_b)
 
-        return scores
+        result['scores'] = scores
+        return result
 
     # -------------------------------------------------------- scoring backends
 
@@ -124,6 +146,7 @@ class GestaltAffinityScorer:
         el_durations = [d for ts, d in durations if ts >= window_start]
 
         v = extract_micro_gestalt(el_notes, el_durations, frame_ms)
+        self._last_vectors[label] = v
 
         sigma = float(ELEMENT_PARAMS[label]['affinity_sigma'])
         denom = 2.0 * sigma * sigma
