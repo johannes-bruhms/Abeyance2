@@ -18,7 +18,7 @@ abeyance2/
 ├── ml/
 │   ├── __init__.py
 │   ├── classifier.py          # GestaltAffinityScorer — affinity-based multi-label scorer with
-│   │                          #   per-element EMA smoothing and mutual exclusion (EMA decay)
+│   │                          #   per-element window sizes, EMA smoothing, and mutual exclusion
 │   └── forge.py               # GestureForge — synthetic training data via Gaussian perturbation,
 │                              #   auto-migrates old seed dimensionality on load
 │
@@ -38,7 +38,8 @@ abeyance2/
 │   ├── __init__.py
 │   ├── app.py                 # AbeyanceGUI — control panel, training dashboard (separate
 │   │                          #   REC/TRAIN/CLR workflow), event log, confidence timeline
-│   └── piano_roll.py          # PianoRollCanvas — scrolling visualization with element colors
+│   └── piano_roll.py          # PianoRollCanvas — scrolling visualization, winner-takes-all
+│                              #   element colors, legend
 │
 ├── tests/
 │   ├── __init__.py
@@ -56,8 +57,8 @@ abeyance2/
 ## Signal Flow
 
 ```
-[Disklavier MIDI In] → GhostNoteFilter → 250ms Frame Buffer → 8D Gestalt
-  → Affinity Scorer (per-element EMA) → ParasiteSwarm → PlaybackEngine → [Disklavier MIDI Out]
+[Disklavier MIDI In] → GhostNoteFilter → Note Buffer → per-element 8D Gestalt
+  → Affinity Scorer (per-element windows + EMA) → ParasiteSwarm → PlaybackEngine → [Disklavier MIDI Out]
 ```
 
 CC 64 (sustain pedal) bypasses classification → routes directly to swarm octave transposition.

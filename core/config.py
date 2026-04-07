@@ -26,11 +26,11 @@ CONFIG = {
 # Per-element tunable model parameters.
 # Each element can be tuned independently via the GUI Elements tab.
 ELEMENT_PARAMS = {
-    'a': {'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'b': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'c': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'd': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'e': {'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'a': {'frame_size_ms': 250, 'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'b': {'frame_size_ms': 150, 'scoring_mode': 'chord', 'chord_min_notes': 3, 'chord_onset_ms': 30, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'c': {'frame_size_ms': 600, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'd': {'frame_size_ms': 500, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'e': {'frame_size_ms': 350, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
 }
 
 ELEMENTS = {

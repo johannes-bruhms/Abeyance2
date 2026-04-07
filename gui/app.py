@@ -148,6 +148,8 @@ class AbeyanceGUI:
         self.timeline_data.append(dict(scores))
         if len(self.timeline_data) > 600:   # ~2.5 min at 250 ms/frame
             self.timeline_data.pop(0)
+        # Feed scores to the piano roll bar chart (always, regardless of active tab)
+        self.piano_roll.set_scores(scores)
         # Only redraw when the timeline tab is actually visible
         if str(self.notebook.select()) == str(self._tl_frame):
             self._redraw_timeline()
@@ -349,10 +351,16 @@ class AbeyanceGUI:
         tk.Frame(col, height=1, bg='#444').pack(fill=tk.X, pady=(12, 4))
         tk.Label(col, text='MODEL PARAMETERS', font=('Consolas', 8, 'bold'),
                  fg=el_color, bg=BG_COL).pack(anchor=tk.W, pady=(0, 4))
-        self._make_el_param_slider(col, el_id, 'Threshold:', 'affinity_threshold', 0.10, 0.90, 0.05)
-        self._make_el_param_slider(col, el_id, 'Sigma:',     'affinity_sigma',     0.05, 0.60, 0.01)
-        self._make_el_param_slider(col, el_id, 'Boost:',     'energy_boost',       0.10, 1.00, 0.05)
-        self._make_el_param_slider(col, el_id, 'Decay:',     'energy_decay',       0.01, 0.10, 0.01)
+        self._make_el_param_slider(col, el_id, 'Frame (ms):', 'frame_size_ms', 50, 1000, 25)
+        self._make_el_param_slider(col, el_id, 'Threshold:',  'affinity_threshold', 0.10, 0.90, 0.05)
+        # Chord-mode elements get chord-specific sliders instead of sigma
+        if ELEMENT_PARAMS[el_id].get('scoring_mode') == 'chord':
+            self._make_el_param_slider(col, el_id, 'Min Notes:',  'chord_min_notes', 2, 10, 1)
+            self._make_el_param_slider(col, el_id, 'Onset (ms):', 'chord_onset_ms',  10, 100, 5)
+        else:
+            self._make_el_param_slider(col, el_id, 'Sigma:',      'affinity_sigma',     0.05, 0.60, 0.01)
+        self._make_el_param_slider(col, el_id, 'Boost:',      'energy_boost',       0.10, 1.00, 0.05)
+        self._make_el_param_slider(col, el_id, 'Decay:',      'energy_decay',       0.01, 0.10, 0.01)
 
         self.el_widgets[el_id] = {
             'col':        col,

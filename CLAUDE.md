@@ -32,14 +32,16 @@ pip install -r requirements.txt
 ```
 [Disklavier MIDI Input]
   → GhostNoteFilter (midi/io.py)            # suppress AI echo notes (note_on + note_off)
-  → 250ms Sliding Window / 125ms Hop (main.py) # overlapping temporal windowing
+  → 125ms Hop / per-element window (main.py) # overlapping temporal windowing
   → extract_micro_gestalt() (core/gestalt.py)  # → 8D feature vector (dynamics-neutral)
-  → GestaltAffinityScorer (ml/classifier.py) # → per-element confidence scores
+  → GestaltAffinityScorer (ml/classifier.py) # per-element window + affinity scoring
   → ParasiteSwarm.feed() (agents/parasite.py)  # energy + (pitch, velocity) pairs
   → per-element _attack handler             # element-specific response + dynamic mapping
   → PlaybackEngine (midi/playback.py)       # scheduled MIDI output (with cancel_all)
   → [Disklavier MIDI Output]
 ```
+
+Each element uses its own temporal window size (`frame_size_ms` in `ELEMENT_PARAMS`) suited to the gesture's natural timescale. The classifier computes separate 8D vectors per element from the raw note buffer on each 125ms hop.
 
 CC 64 (sustain pedal) bypasses the classification pipeline and routes directly to the swarm to modulate octave transposition with zero latency. Pedal is **not** an element — it is a standalone modifier.
 
@@ -47,6 +49,8 @@ CC 64 (sustain pedal) bypasses the classification pipeline and routes directly t
 
 - **Detection is dynamics-neutral.** The 8D gestalt vector does not include MIDI velocity. A gesture is classified as the same element whether performed pp or ff.
 - **Response is dynamics-aware.** Each element has its own dynamic mapping that transforms the performer's input velocity into the swarm's output velocity. This creates element-specific feedback loop characters.
+- **Per-element temporal windows.** Each element has its own `frame_size_ms` (in `ELEMENT_PARAMS`) tuned to its gesture timescale: short windows for instantaneous events (chords), long windows for patterns that unfold over time (oscillation, transposition). Density normalization scales proportionally so feature values remain comparable across window sizes.
+- **Scoring modes.** Elements can use `'affinity'` (default: 8D gestalt distance to trained centroid) or `'chord'` (rule-based: counts near-simultaneous note onsets, no training required). Element B uses chord mode for instant, robust chord detection.
 
 ## 5-Element Taxonomy (core/config.py)
 
@@ -54,13 +58,13 @@ The classifier maps gestures to 5 ML-classified elements (a–e). Multiple eleme
 
 Previously a 6-element taxonomy (a–f). Element E (Sweeps) was merged into A (Linear Velocity) on 2026-04-05 because glissandi are essentially fast scales — the distinction was too blurry to classify reliably. Old element F (Extreme Registers) was renumbered to E.
 
-| ID | Name | Gesture Signature | Swarm Response | Dynamic Mapping |
-|----|------|-------------------|----------------|-----------------|
-| `a` | Linear Velocity | Directional runs, scales, sweeps, glissandi | Counter-motion: inverted direction, neighboring register | Compressed proportional (shadow) |
-| `b` | Vertical Density | Dense simultaneous chords/clusters | Sustained cluster resonance: quiet held chord, long decay | Inverse (system compensates) |
-| `c` | Transposed Shapes | Interval shape shifting registers, high variance | Tritone echo: shape replayed +6 semitones | Direct proportional (mirror) |
-| `d` | Oscillation | Rapid alternation between pitch regions, trills, tremolo | Phase-shifted trill: boundary pitches at offset rate | Expanded (extremes amplified) |
-| `e` | Extreme Registers | Both keyboard extremes simultaneously | Fill the gap: gentle notes in avoided middle register | Averaged (median of input) |
+| ID | Name | Frame (ms) | Gesture Signature | Swarm Response | Dynamic Mapping |
+|----|------|-----------|-------------------|----------------|-----------------|
+| `a` | Linear Velocity | 250 | Directional runs, scales, sweeps, glissandi | Counter-motion: inverted direction, neighboring register | Compressed proportional (shadow) |
+| `b` | Vertical Density | 150 | Dense simultaneous chords/clusters (chord mode) | Sustained cluster resonance: quiet held chord, long decay | Inverse (system compensates) |
+| `c` | Transposed Shapes | 600 | Interval shape shifting registers, high variance | Tritone echo: shape replayed +6 semitones | Direct proportional (mirror) |
+| `d` | Oscillation | 500 | Rapid alternation between pitch regions, trills, tremolo | Phase-shifted trill: boundary pitches at offset rate | Expanded (extremes amplified) |
+| `e` | Extreme Registers | 350 | Both keyboard extremes simultaneously | Fill the gap: gentle notes in avoided middle register | Averaged (median of input) |
 
 ### Dynamic Mapping Details
 
@@ -91,7 +95,7 @@ Previously included a↔d (removed 2026-04-05 to allow oscillation/trills to act
 
 ## 8D Gestalt Vector (core/gestalt.py)
 
-`extract_micro_gestalt()` converts a 250ms window of `(pitch, timestamp)` tuples into:
+`extract_micro_gestalt()` converts a window of `(pitch, timestamp)` tuples into an 8D vector. The window duration is per-element (`frame_size_ms`); density normalization scales proportionally with window size so features remain comparable:
 
 | Dim | Name | Description |
 |-----|------|-------------|
@@ -111,13 +115,13 @@ Previously included a↔d (removed 2026-04-05 to allow oscillation/trills to act
 - **`core/config.py`**: All global tuning constants — frame size, hop size, energy thresholds, ghost echo TTL, gestalt parameters, per-element model params. Single source of truth for all magic numbers.
 - **`core/gestalt.py`**: `extract_micro_gestalt()` — 8D feature extraction from raw MIDI. Dynamics-neutral.
 - **`core/logger.py`**: Centralized logging singleton. `from core.logger import log` then `log.info(...)`, `log.warn(...)`, `log.error(..., exc=True)`. Writes to `abeyance.log` (auto-rotates at 1MB) and GUI event log.
-- **`ml/classifier.py`** (`GestaltAffinityScorer`): Affinity-based multi-label scorer. Computes per-element weighted Gaussian proximity every 125ms hop (250ms sliding window) with EMA smoothing and mutual-exclusion suppression (with EMA decay on suppressed elements to prevent hidden accumulation). Multiple elements can be active simultaneously.
+- **`ml/classifier.py`** (`GestaltAffinityScorer`): Multi-label scorer with two scoring backends. On each 125ms hop, scores each element using its own `frame_size_ms` window: **affinity mode** computes 8D gestalt distance to the trained centroid; **chord mode** counts near-simultaneous note onsets (rule-based, no training required). Both modes feed into per-element EMA smoothing and mutual-exclusion suppression. Multiple elements can be active simultaneously.
 - **`ml/forge.py`** (`GestureForge`): Bootstraps training data from `human_seeds.json` by generating Gaussian-perturbed synthetic variants per element. Seed data accumulates across multiple recording takes. Automatically migrates old 6-element seed keys (f→e) on load.
 - **`midi/io.py`** (`GhostNoteFilter`): TTL-based dict of AI-generated note fingerprints. Tracks each echo entry until both `note_on` and `note_off` are consumed, preventing feedback loops.
 - **`agents/parasite.py`** (`ParasiteSwarm`): 5 independent agents (one per element). Each has `energy` (0.0–1.0) and a `stomach` deque of `(pitch, velocity)` tuples. Energy rises per recognized motif, decays per tick, triggers element-specific `_attack_*` handlers when > `CONFIG['energy_trigger']` (0.6). Each handler implements a distinct response behavior and dynamic mapping.
 - **`midi/playback.py`** (`PlaybackEngine`): Non-blocking scheduled note output using `threading.Timer`. Provides `on_note_scheduled` callback list for visual hooks. Tracks all active timers; `cancel_all()` silences the swarm instantly.
 - **`gui/app.py`** (`AbeyanceGUI`): Tkinter GUI with left control panel, live piano roll, confidence timeline, per-element training dashboard (with live recording feedback, take accumulation, silence stripping, gap-compressed mini canvas with fixed full MIDI range, separate TRAIN button for on-demand forging/retraining), and event log.
-- **`gui/piano_roll.py`** (`PianoRollCanvas`): Scrolling piano roll with per-element color coding, confidence-proportional horizontal bands, and fading detection labels.
+- **`gui/piano_roll.py`** (`PianoRollCanvas`): Scrolling piano roll with winner-takes-all element color coding (highest-confidence element), live confidence bar chart overlay (top-right), color legend (bottom), and fading detection labels.
 
 ## Recording / Training Workflow
 
@@ -125,7 +129,7 @@ Recording and training are **separate steps** — recording accumulates seed dat
 
 1. Connect MIDI ports in the left panel.
 2. Go to the **Elements** tab — each element has its own column.
-3. Press **REC** → play the gesture → press **STOP**. Silent frames (density < 0.05) are automatically stripped. The mini MIDI canvas (fixed full MIDI range 0–127) compresses temporal gaps to visually confirm truncation.
+3. Press **REC** → play the gesture → press **STOP**. Gestalt frames are computed from raw notes using the element's own `frame_size_ms` window. Silent frames (density < 0.05) are automatically stripped. The mini MIDI canvas (fixed full MIDI range 0–127) compresses temporal gaps to visually confirm truncation.
 4. Repeat for more takes — data **accumulates** across REC/STOP cycles. The mini canvas shows all accumulated notes; stats show take count and total frames. Status shows "Untrained" in orange until the model is trained.
 5. Adjust **Variations** and **Noise Spread** per element.
 6. Press **TRAIN** to forge synthetic variations and retrain the model. Can be re-run with different synth params without re-recording.
@@ -140,13 +144,15 @@ EMA alphas recalibrated on 2026-04-05 for 8Hz scoring rate (125ms hop). Formula:
 
 Taxonomy reduced from 6→5 elements on 2026-04-05: Sweeps merged into Linear Velocity (glissandi ≈ fast scales), old F renumbered to E. Mutual exclusion reduced to only a↔c (a↔d removed to allow trills/oscillation to activate independently).
 
-| Element | Key Weight Changes | Threshold | EMA Alpha | Rationale |
-|---------|-------------------|-----------|-----------|-----------|
-| `a` Linear Velocity | spread 0.50 (raised), up/down 0.85 | 0.40 | 0.19 | Now covers sweeps; spread weight raised to detect wide traversals |
-| `b` Vertical Density | polyphony 0.90, density 0.60 (lowered) | 0.35 | 0.13 | Polyphony-dominant; density centroid lowered to 0.40 for real chord counts |
-| `c` Transposed Shapes | variance 0.90 | 0.35 | 0.19 | Variance is the distinguishing feature |
-| `d` Oscillation | up/down 0.90, spread 0.15 (lowered) | 0.35 | 0.19 | Centroid up/down lowered to 0.35 for narrow trills; no longer excluded by A |
-| `e` Extreme Registers | bimodality 1.00 + spread 0.80 | 0.35 | 0.11 | Bimodality is the decisive separator from C |
+Per-element frame sizes and chord scoring mode added on 2026-04-05 to match each gesture's natural timescale. Short windows (150ms) for instantaneous chords so a single chord dominates the window; long windows (500–600ms) for oscillation and transposition patterns that need time to unfold. Density normalization scales proportionally (`density_max * frame_ms/250`) so the density dimension remains comparable across window sizes. Recording always recomputes gestalt frames from raw notes using the target element's window size, ensuring training profiles match detection.
+
+| Element | Frame (ms) | Key Weight Changes | Threshold | EMA Alpha | Rationale |
+|---------|-----------|-------------------|-----------|-----------|-----------|
+| `a` Linear Velocity | 250 | spread 0.50 (raised), up/down 0.85 | 0.40 | 0.30 | Now covers sweeps; spread weight raised to detect wide traversals |
+| `b` Vertical Density | 150 | **chord mode** (min 3 notes, 30ms onset) | 0.35 | 0.25 | Rule-based chord detector — bypasses gestalt/affinity, fires instantly on simultaneous note clusters |
+| `c` Transposed Shapes | 600 | variance 0.90 | 0.35 | 0.30 | Long window captures shape + transposition in one vector |
+| `d` Oscillation | 500 | up/down 0.90, spread 0.15 (lowered) | 0.35 | 0.30 | Long window captures multiple back-and-forth oscillation cycles |
+| `e` Extreme Registers | 350 | bimodality 1.00 + spread 0.80 | 0.35 | 0.20 | Bimodality is the decisive separator from C |
 
 ## Known Limitations
 

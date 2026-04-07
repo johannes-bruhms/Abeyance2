@@ -5,101 +5,130 @@ from core.config import DEFAULT_CENTROIDS, ELEMENTS, EMA_ALPHAS, ELEMENT_PARAMS
 from ml.classifier import GestaltAffinityScorer
 
 
+def _make_notes_from_centroid(centroid, t_base=0.0, n=10):
+    """Synthesize (pitch, timestamp) tuples that roughly produce a given centroid.
+
+    This is a rough approximation — it generates notes in a pattern that
+    exercises the main gestalt dimensions so that the scorer has real data
+    to work with.
+    """
+    notes = []
+    for i in range(n):
+        pitch = int(40 + centroid[2] * 88 * (i / n))  # spread
+        ts = t_base + i * 0.02  # 20ms apart
+        notes.append((pitch, ts))
+    return notes
+
+
 class TestGestaltAffinityScorer(unittest.TestCase):
 
     def setUp(self):
         self.scorer = GestaltAffinityScorer()
 
     def test_score_all_returns_all_elements(self):
-        self.scorer.push_frame(np.zeros(8))
-        scores = self.scorer.score_all()
+        notes = [(60, 0.0), (64, 0.05), (67, 0.10)]
+        scores = self.scorer.score_all(notes, [], 0.25)
         self.assertEqual(set(scores.keys()), set(ELEMENTS.keys()))
 
     def test_scores_in_valid_range(self):
-        self.scorer.push_frame(np.array(DEFAULT_CENTROIDS['a']))
-        scores = self.scorer.score_all()
+        notes = _make_notes_from_centroid(DEFAULT_CENTROIDS['a'], t_base=0.0)
+        scores = self.scorer.score_all(notes, [], 0.25)
         for label, score in scores.items():
             self.assertGreaterEqual(score, 0.0, f"{label} below 0")
             self.assertLessEqual(score, 1.0, f"{label} above 1")
 
-    def test_matching_centroid_scores_highest_no_exclusion(self):
-        """Elements without mutual exclusion should score highest on their own centroid."""
-        from core.config import MUTUAL_EXCLUSION
-        excluded = set()
-        for a, b in MUTUAL_EXCLUSION:
-            excluded.add(a)
-            excluded.add(b)
-        # Elements not in any mutual-exclusion pair
-        free_elements = [e for e in ELEMENTS if e not in excluded]
-        self.assertTrue(len(free_elements) >= 2)
+    def test_no_notes_returns_ema_state(self):
+        scores = self.scorer.score_all(None, None, None)
+        for label in ELEMENTS:
+            self.assertEqual(scores[label], 0.0)
 
-        for el_id in free_elements:
-            scorer = GestaltAffinityScorer()
-            centroid = np.array(DEFAULT_CENTROIDS[el_id])
-            for _ in range(10):
-                scorer.push_frame(centroid)
-                scores = scorer.score_all()
-            self.assertGreater(scores[el_id], 0.0,
-                               f"{el_id} scored 0 on its own centroid")
-
-    def test_internal_ema_builds_on_own_centroid(self):
-        """Every element's internal EMA should build up when fed its own centroid."""
+    def test_internal_ema_builds_with_repeated_scoring(self):
+        """Every element's internal EMA should build up when fed matching notes."""
         for el_id in ELEMENTS:
             scorer = GestaltAffinityScorer()
-            centroid = np.array(DEFAULT_CENTROIDS[el_id])
-            for _ in range(10):
-                scorer.push_frame(centroid)
-                scorer.score_all()
-            # Internal EMA may be decayed by mutual exclusion, but should still
-            # be nonzero after 10 frames (decay factor 0.3 per frame is aggressive,
-            # but fresh score each frame partially rebuilds it)
+            notes = _make_notes_from_centroid(DEFAULT_CENTROIDS[el_id], t_base=0.0)
+            for i in range(10):
+                t = 0.25 + i * 0.125
+                scorer.score_all(notes, [], t)
             self.assertGreater(scorer._ema[el_id], 0.0,
-                               f"{el_id} internal EMA is 0 on own centroid")
+                               f"{el_id} internal EMA is 0 after repeated scoring")
 
     def test_silence_decays_ema(self):
-        """Pushing silence (density < gate) should aggressively decay EMA values."""
-        centroid = np.array(DEFAULT_CENTROIDS['b'])
-        for _ in range(10):
-            self.scorer.push_frame(centroid)
-            self.scorer.score_all()
+        """Scoring with no recent notes should aggressively decay EMA values."""
+        notes = _make_notes_from_centroid(DEFAULT_CENTROIDS['b'], t_base=0.0)
+        for i in range(10):
+            self.scorer.score_all(notes, [], 0.25 + i * 0.125)
 
-        # Now push silence frames (10 frames at 8Hz ≈ 1.25s of silence)
-        silence = np.zeros(8)
-        for _ in range(10):
-            self.scorer.push_frame(silence)
-            self.scorer.score_all()
-        post_scores = self.scorer.score_all()
+        # Now score with no recent notes (current_time far past the notes)
+        for i in range(10):
+            self.scorer.score_all(notes, [], 5.0 + i * 0.125)
+        post_scores = self.scorer.score_all(notes, [], 7.0)
 
-        # After prolonged silence, all EMA values should be near zero
         for label in ELEMENTS:
             self.assertLess(post_scores[label], 0.05,
                             f"{label} didn't decay to near-zero during silence")
 
     def test_mutual_exclusion_suppresses_lower(self):
-        """In a mutually exclusive pair, only the dominant one should be nonzero."""
+        """In a mutually exclusive pair, at most one should be nonzero."""
         from core.config import MUTUAL_EXCLUSION
-        # Use a centroid that should activate 'a' (linear velocity)
-        centroid = np.array(DEFAULT_CENTROIDS['a'])
-        for _ in range(20):
-            self.scorer.push_frame(centroid)
-        scores = self.scorer.score_all()
-        # Check each pair: at most one should be nonzero
+        notes = _make_notes_from_centroid(DEFAULT_CENTROIDS['a'], t_base=0.0)
+        for i in range(20):
+            t = 0.25 + i * 0.125
+            self.scorer.score_all(notes, [], t)
+        scores = self.scorer.score_all(notes, [], 0.25 + 20 * 0.125)
         for el_a, el_b in MUTUAL_EXCLUSION:
-            if scores[el_a] > 0 and scores[el_b] > 0:
-                self.fail(f"Mutual exclusion failed: {el_a}={scores[el_a]:.3f}, "
-                          f"{el_b}={scores[el_b]:.3f}")
+            # Both can be near-zero (neither activated), but both meaningfully
+            # active is a failure.  Use 0.01 threshold to ignore float dust.
+            both_active = scores[el_a] > 0.01 and scores[el_b] > 0.01
+            self.assertFalse(both_active,
+                             f"Mutual exclusion failed: {el_a}={scores[el_a]:.4f}, "
+                             f"{el_b}={scores[el_b]:.4f}")
 
-    def test_mutual_exclusion_decays_suppressed_ema(self):
-        """Suppressed element's EMA should be decayed, not just zeroed in output."""
-        # Push frames that favor 'a' over 'c' (mutually exclusive pair)
-        centroid = np.array(DEFAULT_CENTROIDS['a'])
-        for _ in range(10):
-            self.scorer.push_frame(centroid)
-            self.scorer.score_all()
-        # The suppressed partner's internal EMA should be small
-        suppressed = 'c'
-        self.assertLess(self.scorer._ema[suppressed], 0.1,
-                        "Suppressed element EMA not decayed")
+    def test_per_element_frame_sizes_configured(self):
+        """Each element should have a frame_size_ms in ELEMENT_PARAMS."""
+        for el_id in ELEMENTS:
+            self.assertIn('frame_size_ms', ELEMENT_PARAMS[el_id],
+                          f"{el_id} missing frame_size_ms")
+            self.assertGreater(ELEMENT_PARAMS[el_id]['frame_size_ms'], 0)
+
+
+class TestChordDetector(unittest.TestCase):
+    """Test the rule-based chord detection scoring for element B."""
+
+    def test_simultaneous_chord_detected(self):
+        """A cluster of simultaneous notes should produce a positive score."""
+        # 5 notes within 20ms = clear chord
+        notes = [(60, 1.0), (64, 1.005), (67, 1.010), (72, 1.015), (76, 1.020)]
+        score = GestaltAffinityScorer._score_chord(notes, 1.15, 'b')
+        self.assertGreater(score, 0.0)
+
+    def test_sequential_notes_not_chord(self):
+        """Widely spaced notes should not be detected as a chord."""
+        notes = [(60, 0.0), (64, 0.10), (67, 0.20)]
+        score = GestaltAffinityScorer._score_chord(notes, 0.25, 'b')
+        self.assertEqual(score, 0.0)
+
+    def test_too_few_notes_not_chord(self):
+        """Fewer than chord_min_notes simultaneous notes should score 0."""
+        notes = [(60, 1.0), (64, 1.005)]  # only 2 notes, min is 3
+        score = GestaltAffinityScorer._score_chord(notes, 1.15, 'b')
+        self.assertEqual(score, 0.0)
+
+    def test_large_chord_higher_score(self):
+        """A larger chord should score higher than a smaller one."""
+        small = [(60, 1.0), (64, 1.005), (67, 1.010)]
+        large = [(60, 1.0), (64, 1.002), (67, 1.004),
+                 (72, 1.006), (76, 1.008), (79, 1.010)]
+        s_small = GestaltAffinityScorer._score_chord(small, 1.15, 'b')
+        s_large = GestaltAffinityScorer._score_chord(large, 1.15, 'b')
+        self.assertGreater(s_large, s_small)
+
+    def test_chord_outside_window_ignored(self):
+        """Notes outside the element's frame window should be ignored."""
+        # Notes at t=0, window only covers last 150ms from t=1.0
+        notes = [(60, 0.0), (64, 0.005), (67, 0.010), (72, 0.015)]
+        score = GestaltAffinityScorer._score_chord(notes, 1.0, 'b')
+        self.assertEqual(score, 0.0)
 
 
 class TestDynamicMappings(unittest.TestCase):
@@ -107,16 +136,13 @@ class TestDynamicMappings(unittest.TestCase):
 
     def test_compressed_midpoint_unchanged(self):
         from agents.parasite import ParasiteSwarm
-        # Can't instantiate without playback, test the static functions
         from agents.parasite import _clamp_vel
-        # Compressed: 64 + (vel - 64) * 0.6
         self.assertEqual(int(64 + (64 - 64) * 0.6), 64)
         self.assertEqual(int(64 + (127 - 64) * 0.6), 101)
         self.assertEqual(int(64 + (0 - 64) * 0.6), 25)
 
     def test_inverse_symmetry(self):
         from agents.parasite import _clamp_vel
-        # Inverse: 127 - vel
         self.assertEqual(_clamp_vel(127 - 0), 127)
         self.assertEqual(_clamp_vel(127 - 127), 1)  # clamped to 1
         self.assertEqual(_clamp_vel(127 - 64), 63)

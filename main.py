@@ -203,8 +203,12 @@ class AbeyanceApp:
             log.error(f'Could not save session log: {e}', exc=True)
 
     def _analysis_loop(self):
-        hop_sec    = CONFIG['hop_size_ms'] / 1000.0
-        window_sec = CONFIG['frame_size_ms'] / 1000.0
+        hop_sec = CONFIG['hop_size_ms'] / 1000.0
+        # Buffer must cover the longest per-element window
+        max_window_ms = max(
+            ELEMENT_PARAMS[el].get('frame_size_ms', CONFIG['frame_size_ms'])
+            for el in ELEMENTS)
+        max_window_sec = max_window_ms / 1000.0
 
         while self.analysis_running:
             start_time = time.perf_counter()
@@ -212,34 +216,25 @@ class AbeyanceApp:
             frame_id = self.current_frame_id
             self.current_frame_id += 1
 
-            window_start = start_time - window_sec
-
             with self.lock:
-                # Window: keep notes within trailing 250ms
-                notes_in_window = [n for n in self.current_frame_notes
-                                   if n[2] >= window_start]
-                durations_in_window = [d for ts, d in self.completed_durations
-                                       if ts >= window_start]
-                # Prune old entries (>2× window) to bound memory
-                cutoff = start_time - 2 * window_sec
+                # Prune old entries (>2× max window) to bound memory
+                cutoff = start_time - 2 * max_window_sec
                 self.current_frame_notes = [n for n in self.current_frame_notes
                                             if n[2] >= cutoff]
                 self.completed_durations = [(ts, d) for ts, d in self.completed_durations
                                             if ts >= cutoff]
+                # Snapshot all recent notes for the classifier
+                all_notes = list(self.current_frame_notes)
+                all_durations = list(self.completed_durations)
 
             # Split frame data: (pitch, timestamp) for gestalt, (pitch, velocity) for swarm
-            notes_for_gestalt = [(n[0], n[2]) for n in notes_in_window]
-            notes_for_swarm   = [(n[0], n[1]) for n in notes_in_window]  # (pitch, velocity)
+            notes_for_gestalt = [(n[0], n[2]) for n in all_notes]
+            notes_for_swarm   = [(n[0], n[1]) for n in all_notes
+                                 if n[2] >= start_time - max_window_sec]
+            durations_for_gestalt = [(ts, d) for ts, d in all_durations]
 
-            # 8D gestalt vector — dynamics-neutral (velocity not included)
-            vector_8d = extract_micro_gestalt(notes_for_gestalt, durations_in_window)
-            self.dtw.push_frame(vector_8d)
-
-            if self.recording:
-                self.recording_frames.append(vector_8d)
-                self.recording_frame_times.append((start_time, start_time + window_sec))
-
-            scores = self.dtw.score_all()
+            # Per-element scoring: classifier extracts its own window per element
+            scores = self.dtw.score_all(notes_for_gestalt, durations_for_gestalt, start_time)
 
             # Log every frame for post-performance analysis
             t_rel = round(time.perf_counter() - self.session_start, 3)
@@ -247,7 +242,7 @@ class AbeyanceApp:
                 't':      t_rel,
                 'frame':  frame_id,
                 'scores': {k: round(v, 3) for k, v in scores.items()},
-                'notes':  [n[0] for n in notes_in_window],
+                'notes':  [n[0] for n in all_notes if n[2] >= start_time - max_window_sec],
             }
             with self.lock:
                 self.session_log.append(log_entry)
@@ -305,18 +300,21 @@ class AbeyanceApp:
             n_vars   = int(variations)   if variations   is not None else CONFIG['variations']
             n_spread = float(noise_spread) if noise_spread is not None else CONFIG['noise_spread']
 
-            # If analysis wasn't running, no gestalt frames were accumulated.
-            # Compute them inline from raw notes, chunked into frame_size_ms windows.
-            # Include durations for the articulation dimension.
-            if not frames and raw_notes:
+            # Always recompute gestalt frames from raw notes using the element's
+            # own frame_size_ms.  This ensures the training profile matches the
+            # temporal window used during live detection.
+            frames = []
+            frame_times = []
+            if raw_notes:
+                el_frame_ms = ELEMENT_PARAMS[target].get('frame_size_ms', CONFIG['frame_size_ms'])
                 hop_sec   = CONFIG['hop_size_ms'] / 1000.0
-                frame_sec = CONFIG['frame_size_ms'] / 1000.0
+                frame_sec = el_frame_ms / 1000.0
                 t = raw_notes[0][1]
                 t_end = raw_notes[-1][1] + frame_sec
                 while t < t_end:
                     chunk = [(p, ts) for p, ts in raw_notes if t <= ts < t + frame_sec]
                     dur_chunk = [d for ts_off, d in raw_durations if t <= ts_off < t + frame_sec]
-                    frames.append(extract_micro_gestalt(chunk, dur_chunk))
+                    frames.append(extract_micro_gestalt(chunk, dur_chunk, el_frame_ms))
                     frame_times.append((t, t + frame_sec))
                     t += hop_sec
 

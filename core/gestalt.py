@@ -2,15 +2,18 @@
 import numpy as np
 from core.config import CONFIG
 
-def extract_micro_gestalt(notes_with_times, completed_durations=None):
+def extract_micro_gestalt(notes_with_times, completed_durations=None, frame_ms=250):
     """
-    Squashes a 250ms frame of MIDI data into an 8D Hybrid Additive-Gestalt vector.
+    Squashes a frame of MIDI data into an 8D Hybrid Additive-Gestalt vector.
 
     Args:
         notes_with_times: chronological list of (pitch, timestamp) tuples for note-ons
         completed_durations: list of float durations (seconds) for notes whose note-off
                              arrived during this frame. Used to compute articulation.
                              Pass None or [] if no note-offs occurred.
+        frame_ms: the window duration in milliseconds. Used to scale density
+                  normalization so that different window sizes produce comparable
+                  feature values (density_max_notes is defined for 250ms).
 
     Returns:
         np.array of shape (8,):
@@ -28,8 +31,10 @@ def extract_micro_gestalt(notes_with_times, completed_durations=None):
     pitches = [n[0] for n in notes_with_times]
     times = [n[1] for n in notes_with_times]
 
-    # 1. Density: Raw count of attacks
-    density = min(1.0, len(pitches) / float(CONFIG['density_max_notes']))
+    # 1. Density: Raw count of attacks (scaled by frame duration so
+    #    different window sizes produce comparable density values)
+    density_max = CONFIG['density_max_notes'] * (frame_ms / 250.0)
+    density = min(1.0, len(pitches) / density_max)
 
     # 7. Articulation (computed early so single-note frames still return it)
     if completed_durations:

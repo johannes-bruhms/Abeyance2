@@ -1,6 +1,6 @@
 # gui/piano_roll.py
 import tkinter as tk
-from core.config import ELEMENTS, CONFIG
+from core.config import ELEMENTS, ELEMENT_PARAMS, CONFIG
 
 ELEMENT_COLORS = {
     'a': '#ff8800',  # orange     — Linear Velocity
@@ -25,6 +25,7 @@ class PianoRollCanvas(tk.Canvas):
         self.active_ai_notes    = {}  # pitch → note_id
         self.labels = []
         self.frozen = False
+        self._current_scores = {}     # latest {el_id: confidence} for bar chart
         self.bind('<Configure>', self._on_resize)
 
     # ----------------------------------------------------------------- layout
@@ -116,8 +117,8 @@ class PianoRollCanvas(tk.Canvas):
 
     def resolve_frame(self, frame_id, active_elements):
         """
-        Repaint all notes that belong to frame_id with confidence-proportional
-        horizontal color bands — one band per detected element.
+        Repaint all notes that belong to frame_id with the winning element's
+        color (highest confidence).
         """
         if not active_elements:
             for data in self.notes.values():
@@ -126,15 +127,11 @@ class PianoRollCanvas(tk.Canvas):
             return
 
         sorted_els = sorted(active_elements.items(), key=lambda x: x[1], reverse=True)
-        total = sum(c for _, c in sorted_els)
-        bands = [
-            (ELEMENT_COLORS.get(el, HUMAN_BASE), conf / total)
-            for el, conf in sorted_els
-        ]
+        winner_color = ELEMENT_COLORS.get(sorted_els[0][0], HUMAN_BASE)
 
         for data in self.notes.values():
             if data.get('frame_id') == frame_id and not data['is_ai']:
-                self._apply_bands(data, bands)
+                self._apply_bands(data, [(winner_color, 1.0)])
 
         self._show_label(sorted_els[0][0], active_elements)
 
@@ -172,6 +169,62 @@ class PianoRollCanvas(tk.Canvas):
                                     fill=el_color)
         self.labels.append({'id': label_id, 'tick': 0,
                             'total': LABEL_FRAMES, 'color': el_color})
+
+    # --------------------------------------------------------------- bar chart
+
+    def set_scores(self, scores):
+        """Update the live confidence scores for the bar chart overlay."""
+        self._current_scores = dict(scores)
+
+    def _draw_bar_chart(self):
+        """Draw a live confidence bar chart overlay in the top-right corner."""
+        self.delete('barchart')
+        w = self.winfo_width()  if self.winfo_width()  > 10 else 600
+        h = self.winfo_height() if self.winfo_height() > 10 else 600
+
+        chart_h = min(100, h // 4)
+        bar_w = 14
+        gap = 5
+        n_els = len(ELEMENTS)
+        chart_w = n_els * (bar_w + gap) - gap
+        margin = 10
+        x0 = w - chart_w - margin
+        y0 = margin
+
+        # Background panel
+        self.create_rectangle(x0 - 6, y0 - 6, x0 + chart_w + 6, y0 + chart_h + 22,
+                              fill='#111111', outline='#282828', tags='barchart')
+
+        for i, (el_id, el_name) in enumerate(ELEMENTS.items()):
+            conf = self._current_scores.get(el_id, 0.0)
+            color = ELEMENT_COLORS.get(el_id, '#ffffff')
+            threshold = ELEMENT_PARAMS[el_id].get('affinity_threshold', 0.35)
+
+            bx = x0 + i * (bar_w + gap)
+
+            # Empty bar background
+            self.create_rectangle(bx, y0, bx + bar_w, y0 + chart_h,
+                                  fill='#1a1a1a', outline='', tags='barchart')
+
+            # Filled bar
+            bar_height = conf * chart_h
+            if bar_height > 1:
+                by1 = y0 + chart_h - bar_height
+                bar_color = color if conf >= threshold else _lerp_color(color, '#333333', 0.5)
+                self.create_rectangle(bx, by1, bx + bar_w, y0 + chart_h,
+                                      fill=bar_color, outline='', tags='barchart')
+
+            # Per-element threshold tick
+            ty = y0 + chart_h * (1.0 - threshold)
+            self.create_line(bx, ty, bx + bar_w, ty,
+                             fill='#555555', tags='barchart')
+
+            # Element label
+            self.create_text(bx + bar_w // 2, y0 + chart_h + 10,
+                             text=el_id.upper(), fill=color,
+                             font=('Consolas', 8, 'bold'), tags='barchart')
+
+        self.tag_raise('barchart')
 
     # ----------------------------------------------------------------- animate
 
@@ -217,6 +270,8 @@ class PianoRollCanvas(tk.Canvas):
                 self.itemconfig(ld['id'], fill=_lerp_color(ld['color'], '#0a0a0a', t))
         for ld in dead:
             self.labels.remove(ld)
+
+        self._draw_bar_chart()
 
 
 # ------------------------------------------------------------------ utilities
