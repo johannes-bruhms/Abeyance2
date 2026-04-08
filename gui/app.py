@@ -41,6 +41,7 @@ class AbeyanceGUI:
         self.el_vars    = {}   # el_id → dict of tk.Vars
         self.el_widgets = {}   # el_id → dict of widget refs
         self.currently_recording_el = None
+        self._rec_poll_id = None
         self.timeline_data = []   # list of {el_id: conf} dicts, one per analysis frame
         # Accumulated raw notes per element (for mini canvas across takes)
         self.el_accumulated_notes = {k: [] for k in ELEMENTS}
@@ -103,16 +104,61 @@ class AbeyanceGUI:
                  wraplength=270, justify=tk.LEFT, anchor='w'
                  ).pack(fill=tk.X, pady=(0, 4))
 
+        # ---- Panic button ----
+        self.panic_btn = tk.Button(
+            self.left_panel, text="ALL NOTES OFF",
+            command=self._panic,
+            bg='#cc0000', fg='white', activebackground='#ff0000',
+            font=('Helvetica', 10, 'bold'), relief='raised', bd=2)
+        self.panic_btn.pack(fill=tk.X, pady=(8, 4))
+
+        # ---- Active element indicators + energy bars ----
         tk.Frame(self.left_panel, height=1, bg='#444').pack(fill=tk.X, pady=(10, 4))
-        tk.Label(self.left_panel, text='Frame Size (ms):', bg=BG,
-                 fg='#cccccc', font=('Consolas', 8)).pack(anchor=tk.W)
-        self._frame_size_scale = tk.Scale(
-            self.left_panel, from_=250, to=3000, resolution=250,
-            orient=tk.HORIZONTAL,
-            command=lambda v: self._update_config('frame_size_ms', v),
-            bg=BG, fg='white', highlightthickness=0)
-        self._frame_size_scale.set(CONFIG['frame_size_ms'])
-        self._frame_size_scale.pack(fill=tk.X)
+        tk.Label(self.left_panel, text='ELEMENTS', font=('Consolas', 8, 'bold'),
+                 fg='#888', bg=BG).pack(anchor=tk.W, pady=(0, 4))
+
+        self._el_indicators = {}
+        self._el_energy_bars = {}
+        self._el_energy_canvases = {}
+        for el_id, el_name in ELEMENTS.items():
+            color = ELEMENT_COLORS.get(el_id, '#ffffff')
+            row = tk.Frame(self.left_panel, bg=BG)
+            row.pack(fill=tk.X, pady=1)
+
+            # Active dot
+            dot = tk.Label(row, text=' ', bg='#333333', width=2,
+                           font=('Consolas', 6))
+            dot.pack(side=tk.LEFT, padx=(0, 4))
+
+            # Element label
+            tk.Label(row, text=f'{el_id.upper()} {el_name}',
+                     font=('Consolas', 8), fg=color, bg=BG,
+                     anchor='w').pack(side=tk.LEFT)
+
+            # Energy bar (small canvas)
+            bar_canvas = tk.Canvas(row, width=50, height=10, bg='#1a1a1a',
+                                   highlightthickness=0)
+            bar_canvas.pack(side=tk.RIGHT, padx=(4, 0))
+            bar_fill = bar_canvas.create_rectangle(0, 0, 0, 10,
+                                                    fill='#333333', outline='')
+            self._el_indicators[el_id] = dot
+            self._el_energy_canvases[el_id] = bar_canvas
+            self._el_energy_bars[el_id] = bar_fill
+
+        # ---- Pedal state indicator ----
+        tk.Frame(self.left_panel, height=1, bg='#444').pack(fill=tk.X, pady=(10, 4))
+        pedal_row = tk.Frame(self.left_panel, bg=BG)
+        pedal_row.pack(fill=tk.X)
+        self._pedal_dot = tk.Label(pedal_row, text=' ', bg='#333333', width=2,
+                                   font=('Consolas', 6))
+        self._pedal_dot.pack(side=tk.LEFT, padx=(0, 4))
+        self._pedal_label = tk.Label(pedal_row, text='Sustain Pedal',
+                                     font=('Consolas', 8), fg='#666', bg=BG)
+        self._pedal_label.pack(side=tk.LEFT)
+        self._pedal_oct_label = tk.Label(pedal_row, text='',
+                                         font=('Consolas', 8), fg='#ffaa00', bg=BG)
+        self._pedal_oct_label.pack(side=tk.RIGHT)
+
 
     def _make_slider(self, label, config_key, from_, to, resolution, parent=None):
         p = parent or self.left_panel
@@ -126,6 +172,46 @@ class AbeyanceGUI:
     def _update_config(self, key, val):
         CONFIG[key] = float(val) if ('.' in str(val) or isinstance(CONFIG.get(key), float)) \
                       else int(float(val))
+
+    def _panic(self):
+        """Emergency silence — cancel all pending + send All Notes Off."""
+        self.app_controller.panic()
+        self.status_var.set("PANIC — All Notes Off")
+
+    def update_live_display(self, active_elements, energy_snapshot, pedal_down):
+        """Update the left panel indicators, energy bars, and pedal state.
+
+        Called from the analysis loop via root.after().
+        """
+        # Active element indicators + energy bars
+        for el_id in ELEMENTS:
+            dot = self._el_indicators[el_id]
+            canvas = self._el_energy_canvases[el_id]
+            bar_id = self._el_energy_bars[el_id]
+            color = ELEMENT_COLORS.get(el_id, '#ffffff')
+
+            if el_id in active_elements:
+                dot.config(bg=color)
+            else:
+                dot.config(bg='#333333')
+
+            # Energy bar fill
+            energy = energy_snapshot.get(el_id, 0.0)
+            bar_w = int(energy * 50)
+            threshold = ELEMENT_PARAMS[el_id].get('affinity_threshold', 0.35)
+            bar_color = color if energy > CONFIG.get('energy_trigger', 0.6) else '#555555'
+            canvas.coords(bar_id, 0, 0, bar_w, 10)
+            canvas.itemconfig(bar_id, fill=bar_color)
+
+        # Pedal state
+        if pedal_down:
+            self._pedal_dot.config(bg='#ffaa00')
+            self._pedal_label.config(fg='#ffaa00')
+            self._pedal_oct_label.config(text='+8va')
+        else:
+            self._pedal_dot.config(bg='#333333')
+            self._pedal_label.config(fg='#666666')
+            self._pedal_oct_label.config(text='')
 
     def _toggle_analysis(self):
         if self.app_controller.analysis_running:
@@ -361,6 +447,7 @@ class AbeyanceGUI:
             self._make_el_param_slider(col, el_id, 'Sigma:',      'affinity_sigma',     0.05, 0.60, 0.01)
         self._make_el_param_slider(col, el_id, 'Boost:',      'energy_boost',       0.10, 1.00, 0.05)
         self._make_el_param_slider(col, el_id, 'Decay:',      'energy_decay',       0.01, 0.10, 0.01)
+        self._make_el_param_slider(col, el_id, 'Drain:',      'energy_drain',       0.10, 0.80, 0.05)
 
         self.el_widgets[el_id] = {
             'col':        col,
@@ -372,13 +459,14 @@ class AbeyanceGUI:
         }
 
     def _make_el_param_slider(self, parent, el_id, label, param_key, from_, to, resolution):
+        is_int = isinstance(ELEMENT_PARAMS[el_id][param_key], int)
         tk.Label(parent, text=label, font=('Consolas', 8),
                  fg='#aaa', bg=BG_COL).pack(anchor=tk.W, pady=(3, 0))
         s = tk.Scale(parent, from_=from_, to=to, resolution=resolution,
                      orient=tk.HORIZONTAL, bg=BG_COL, fg='white',
                      highlightthickness=0, length=170,
-                     command=lambda v, e=el_id, k=param_key:
-                         ELEMENT_PARAMS[e].__setitem__(k, float(v)))
+                     command=lambda v, e=el_id, k=param_key, ii=is_int:
+                         ELEMENT_PARAMS[e].__setitem__(k, int(float(v)) if ii else float(v)))
         s.set(ELEMENT_PARAMS[el_id][param_key])
         s.pack(fill=tk.X)
 
@@ -452,7 +540,7 @@ class AbeyanceGUI:
             ws['rec_btn'].config(text='REC', bg='#880000')
             ws['dot'].config(bg='#555555')
             ws['status_lbl'].config(text='Idle', fg='#888')
-            if hasattr(self, '_rec_poll_id') and self._rec_poll_id:
+            if self._rec_poll_id:
                 self.root.after_cancel(self._rec_poll_id)
                 self._rec_poll_id = None
 
@@ -463,10 +551,9 @@ class AbeyanceGUI:
             return
         ws = self.el_widgets[el_id]
         n_notes = len(ac.recording_raw_notes)
-        n_frames = len(ac.recording_frames)
         elapsed = round(time.perf_counter() - ac.recording_start_t, 1)
         ws['status_lbl'].config(
-            text=f'REC {elapsed}s  {n_notes} notes  {n_frames} frames',
+            text=f'REC {elapsed}s  {n_notes} notes',
             fg='#ff6600')
         # Blink the dot
         dot_color = '#ff2200' if int(elapsed * 2) % 2 == 0 else '#661100'
@@ -524,7 +611,7 @@ class AbeyanceGUI:
         ws = self.el_widgets[el_id]
         el_color = ELEMENT_COLORS.get(el_id, '#ffffff')
 
-        total_seed = len(ac.dtw.forge.seeds.get(el_id, []))
+        total_seed = ac.dtw.get_seed_count(el_id)
         if total_seed == 0:
             log.warn(f'No seed data for {ELEMENTS[el_id]} — record some takes first.', element=el_id)
             return

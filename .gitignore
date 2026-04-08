@@ -1,5 +1,7 @@
 __pycache__/
 session_*.json
-sessions/
+sessions/*.json
+sessions/__pycache__/
+archived/
 abeyance.log
 .claude/settings.local.json

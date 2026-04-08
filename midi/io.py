@@ -6,37 +6,54 @@ from core.logger import log
 
 class GhostNoteFilter:
     def __init__(self, echo_ttl):
-        # note → {'expiry': float, 'on_seen': bool}
-        # Entry stays alive until both note_on and note_off echoes are consumed.
+        # note → list of {'expiry': float, 'on_seen': bool}
+        # Multiple entries per pitch allow overlapping AI notes (e.g. trills).
         self.expected_echoes = {}
         self.lock = threading.Lock()
         self.echo_ttl = echo_ttl
 
     def register_ai_note(self, note):
         with self.lock:
-            self.expected_echoes[note] = {
+            if note not in self.expected_echoes:
+                self.expected_echoes[note] = []
+            self.expected_echoes[note].append({
                 'expiry': time.perf_counter() + self.echo_ttl,
                 'on_seen': False,
-            }
+            })
 
     def filter_incoming(self, msg):
         now = time.perf_counter()
         with self.lock:
             # Prune expired entries
-            self.expected_echoes = {
-                k: v for k, v in self.expected_echoes.items()
-                if v['expiry'] > now
-            }
+            for note in list(self.expected_echoes):
+                self.expected_echoes[note] = [
+                    e for e in self.expected_echoes[note] if e['expiry'] > now
+                ]
+                if not self.expected_echoes[note]:
+                    del self.expected_echoes[note]
+
             if msg.type in ['note_on', 'note_off'] and getattr(msg, 'note', -1) in self.expected_echoes:
-                entry = self.expected_echoes[msg.note]
+                entries = self.expected_echoes[msg.note]
                 is_note_off = (msg.type == 'note_off') or \
                               (msg.type == 'note_on' and msg.velocity == 0)
                 if is_note_off:
-                    # Suppress echo note_off and remove the fully-consumed entry
-                    del self.expected_echoes[msg.note]
+                    # Consume the oldest entry that has seen its note_on
+                    for i, entry in enumerate(entries):
+                        if entry['on_seen']:
+                            entries.pop(i)
+                            break
+                    else:
+                        # No on_seen entry — consume the oldest anyway
+                        if entries:
+                            entries.pop(0)
+                    if not entries:
+                        del self.expected_echoes[msg.note]
                     return None
-                # note_on with velocity > 0: mark as seen, keep entry for note_off
-                entry['on_seen'] = True
+                # note_on with velocity > 0: mark the oldest unmarked entry
+                for entry in entries:
+                    if not entry['on_seen']:
+                        entry['on_seen'] = True
+                        break
                 return None
         return msg
 
@@ -82,3 +99,10 @@ class MidiIO:
     def send_note_off(self, note):
         if self.outport:
             self.outport.send(mido.Message('note_off', note=note, velocity=0))
+
+    def send_all_notes_off(self):
+        """Send MIDI CC 123 (All Notes Off) on all channels."""
+        if self.outport:
+            for ch in range(16):
+                self.outport.send(mido.Message('control_change',
+                                               channel=ch, control=123, value=0))

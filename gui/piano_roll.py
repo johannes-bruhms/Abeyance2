@@ -35,7 +35,7 @@ class PianoRollCanvas(tk.Canvas):
         self.delete('legend')
         h = self.winfo_height()
         w = self.winfo_width()
-        key_height = h / 88.0
+        key_height = h / CONFIG['piano_keys']
         for i in range(0, 88, 12):
             y = h - (i * key_height)
             self.create_line(0, y, w, y, fill='#1f1f1f', tags='grid_line')
@@ -61,7 +61,7 @@ class PianoRollCanvas(tk.Canvas):
         h = self.winfo_height() if self.winfo_height() > 10 else 600
         w = self.winfo_width()  if self.winfo_width()  > 10 else 600
 
-        key_height = h / 88.0
+        key_height = h / CONFIG['piano_keys']
         y1 = h - ((note - 21 + 1) * key_height)
         y2 = y1 + key_height
         x1, x2 = w - 10, w - 5

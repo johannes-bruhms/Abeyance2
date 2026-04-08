@@ -14,8 +14,17 @@ class GestureForge:
 
     def load_seeds(self):
         if os.path.exists(self.seed_file):
-            with open(self.seed_file, 'r') as f:
-                data = json.load(f)
+            try:
+                with open(self.seed_file, 'r') as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                # Corrupt file — back up and start fresh
+                backup = self.seed_file + '.corrupt'
+                try:
+                    os.replace(self.seed_file, backup)
+                except OSError:
+                    pass
+                return {}
             # Migrate old seeds to current dimensionality
             migrated = False
             for el_id, frames in data.items():
@@ -23,16 +32,11 @@ class GestureForge:
                     if len(vec) < GESTALT_DIM:
                         frames[i] = vec + [0.0] * (GESTALT_DIM - len(vec))
                         migrated = True
-            # Migrate taxonomy: remove old 'e' (Sweeps), rename 'f' → 'e'
-            if 'e' in data and 'f' in data:
-                del data['e']
-                data['e'] = data.pop('f')
-                migrated = True
-            elif 'e' in data and 'f' not in data:
-                # Old 'e' exists but no 'f' — just remove old Sweeps data
-                del data['e']
-                migrated = True
-            elif 'f' in data:
+            # Migrate taxonomy: rename 'f' → 'e' (old F was Extreme Registers).
+            # Only runs when 'f' key exists — safe to re-run on already-migrated data.
+            if 'f' in data:
+                if 'e' in data:
+                    del data['e']  # discard old Sweeps element
                 data['e'] = data.pop('f')
                 migrated = True
             if migrated:

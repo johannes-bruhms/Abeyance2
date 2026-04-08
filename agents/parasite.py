@@ -55,13 +55,20 @@ class ParasiteSwarm:
         while self.running:
             time.sleep(tick_sec)
 
+            pending_events = []
             with self.lock:
                 for label, agent in self.agents.items():
                     agent['energy'] = max(
                         0.0, agent['energy'] - ELEMENT_PARAMS[label]['energy_decay'])
 
                     if agent['energy'] > CONFIG['energy_trigger'] and len(agent['stomach']) > 0:
-                        self._trigger_attack(label, agent)
+                        event = self._trigger_attack(label, agent)
+                        if event:
+                            pending_events.append(event)
+
+            # Emit attack callbacks outside the lock to avoid deadlock
+            for event in pending_events:
+                self._emit_attack(event)
 
     # -------------------------------------------------------------- dynamic mappings
 
@@ -84,7 +91,7 @@ class ParasiteSwarm:
         return _clamp_vel(center + deviation * 1.5)
 
     def _map_vel_averaged(self, velocities):
-        """F — Averaged: mean of all input velocities."""
+        """E — Averaged: mean of all input velocities."""
         if not velocities:
             return 64
         return _clamp_vel(sum(velocities) / len(velocities))
@@ -103,6 +110,12 @@ class ParasiteSwarm:
         with self.lock:
             return {label: round(agent['energy'], 3) for label, agent in self.agents.items()}
 
+    def _pedal_transpose(self, note):
+        """Apply octave transposition when sustain pedal is held."""
+        if self.sustain_pedal_down:
+            return _clamp_note(note + 12)
+        return note
+
     def _trigger_attack(self, label, agent):
         dispatch = {
             'a': self._attack_a,
@@ -113,7 +126,8 @@ class ParasiteSwarm:
         }
         handler = dispatch.get(label)
         if handler:
-            handler(agent, label)
+            return handler(agent, label)
+        return None
 
     def _attack_a(self, agent, label):
         """Linear Velocity — Counter-motion: invert pitch direction, compressed dynamics."""
@@ -127,20 +141,20 @@ class ParasiteSwarm:
         out_notes = []
         for i, (pitch, vel) in enumerate(reversed(recent)):
             out_vel = self._map_vel_compressed(vel)
-            out_note = _clamp_note(pitch + offset)
+            out_note = self._pedal_transpose(_clamp_note(pitch + offset))
             self.playback.schedule_note(
                 out_note, out_vel,
                 duration_sec=0.4,
                 delay_sec=i * 0.1)
             out_notes.append({'note': out_note, 'vel': out_vel, 'dur': 0.4, 'delay': round(i * 0.1, 3)})
-        agent['energy'] -= 0.3
-        self._emit_attack({
+        agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label].get('energy_drain', 0.3))
+        return {
             'element': label, 'mapping': 'compressed',
             'input': [list(t) for t in recent],
             'output': out_notes,
             'energy_before': round(energy_before, 3),
             'energy_after': round(agent['energy'], 3),
-        })
+        }
 
     def _attack_b(self, agent, label):
         """Vertical Density — Sustained cluster resonance: quiet chord, slow build."""
@@ -159,20 +173,20 @@ class ParasiteSwarm:
         out_notes = []
         for pitch, vel in chord:
             out_vel = self._map_vel_inverse(vel)
-            out_note = _clamp_note(pitch)
+            out_note = self._pedal_transpose(_clamp_note(pitch))
             self.playback.schedule_note(
                 out_note, out_vel,
                 duration_sec=2.5,
                 delay_sec=0.05)
             out_notes.append({'note': out_note, 'vel': out_vel, 'dur': 2.5, 'delay': 0.05})
-        agent['energy'] -= 0.4
-        self._emit_attack({
+        agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label].get('energy_drain', 0.4))
+        return {
             'element': label, 'mapping': 'inverse',
             'input': [list(t) for t in recent],
             'output': out_notes,
             'energy_before': round(energy_before, 3),
             'energy_after': round(agent['energy'], 3),
-        })
+        }
 
     def _attack_c(self, agent, label):
         """Transposed Shapes — Tritone echo: replay shape transposed by 6 semitones."""
@@ -184,20 +198,20 @@ class ParasiteSwarm:
         out_notes = []
         for i, (pitch, vel) in enumerate(recent):
             out_vel = self._map_vel_direct(vel)
-            out_note = _clamp_note(pitch + tritone)
+            out_note = self._pedal_transpose(_clamp_note(pitch + tritone))
             self.playback.schedule_note(
                 out_note, out_vel,
                 duration_sec=0.3,
                 delay_sec=i * 0.08)
             out_notes.append({'note': out_note, 'vel': out_vel, 'dur': 0.3, 'delay': round(i * 0.08, 3)})
-        agent['energy'] -= 0.3
-        self._emit_attack({
+        agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label].get('energy_drain', 0.3))
+        return {
             'element': label, 'mapping': 'direct',
             'input': [list(t) for t in recent],
             'output': out_notes,
             'energy_before': round(energy_before, 3),
             'energy_after': round(agent['energy'], 3),
-        })
+        }
 
     def _attack_d(self, agent, label):
         """Oscillation — Phase-shifted trill: oscillate between boundary pitches at offset rate."""
@@ -213,20 +227,20 @@ class ParasiteSwarm:
         for i in range(6):
             pitch = lo if i % 2 == 0 else hi
             out_vel = self._map_vel_expanded(mean_vel)
-            out_note = _clamp_note(pitch)
+            out_note = self._pedal_transpose(_clamp_note(pitch))
             self.playback.schedule_note(
                 out_note, out_vel,
                 duration_sec=0.15,
                 delay_sec=i * 0.12)
             out_notes.append({'note': out_note, 'vel': out_vel, 'dur': 0.15, 'delay': round(i * 0.12, 3)})
-        agent['energy'] -= 0.35
-        self._emit_attack({
+        agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label].get('energy_drain', 0.35))
+        return {
             'element': label, 'mapping': 'expanded',
             'input': [list(t) for t in recent],
             'output': out_notes,
             'energy_before': round(energy_before, 3),
             'energy_after': round(agent['energy'], 3),
-        })
+        }
 
     def _attack_e(self, agent, label):
         """Extreme Registers — Fill the gap: respond in the middle register the performer avoids."""
@@ -242,17 +256,17 @@ class ParasiteSwarm:
         energy_before = agent['energy']
         out_notes = []
         for i, pitch in enumerate(fill_notes):
-            out_note = _clamp_note(pitch)
+            out_note = self._pedal_transpose(_clamp_note(pitch))
             self.playback.schedule_note(
                 out_note, avg_vel,
                 duration_sec=1.0,
                 delay_sec=i * 0.2)
             out_notes.append({'note': out_note, 'vel': avg_vel, 'dur': 1.0, 'delay': round(i * 0.2, 3)})
-        agent['energy'] -= 0.4
-        self._emit_attack({
+        agent['energy'] = max(0.0, agent['energy'] - ELEMENT_PARAMS[label].get('energy_drain', 0.4))
+        return {
             'element': label, 'mapping': 'averaged',
             'input': [list(t) for t in recent],
             'output': out_notes,
             'energy_before': round(energy_before, 3),
             'energy_after': round(agent['energy'], 3),
-        })
+        }

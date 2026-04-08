@@ -38,7 +38,7 @@ A pianist performing with the Abeyance II system is not making one-shot absolute
 
 Pylyshyn and Storm (1988) demonstrated that people can independently track roughly **4–5 moving objects** among distractors. This limit appears to be hard — it does not improve significantly with practice and is remarkably consistent across individuals. The task is analogous to a pianist monitoring multiple simultaneous element activations in the Abeyance system: each active element produces a distinct auditory stream that the performer must track to respond coherently.
 
-**Relevance to Abeyance:** If the system activates 3 elements simultaneously, a skilled performer may be able to attend to all three responses and adjust their playing accordingly. At 5–6 simultaneous activations, the MOT literature predicts that the performer will begin "losing" streams — failing to track which response corresponds to which gesture, defaulting to global rather than element-specific reactions.
+**Relevance to Abeyance:** If the system activates 3 elements simultaneously, a skilled performer may be able to attend to all three responses and adjust their playing accordingly. At 5 simultaneous activations, the MOT literature predicts that the performer will begin "losing" streams — failing to track which response corresponds to which gesture, defaulting to global rather than element-specific reactions.
 
 **Source:** Pylyshyn, Z. W., & Storm, R. W. (1988). Tracking multiple independent targets: Evidence for a parallel tracking mechanism. *Spatial Vision*, 3(3), 179–197.
 
@@ -90,13 +90,13 @@ Synthesizing the MOT, MRT, and Cowan literatures, the prediction is:
 |---|---|
 | 1–2 | Comfortable. Performer can identify which elements are active and respond deliberately. |
 | 3–4 | Challenging but manageable. Corresponds to Cowan's attentional focus limit. Performers may begin simplifying their playing to reduce cognitive load. |
-| 5–6 | Overload. Performer cannot independently track all active channels. Responses become global (reacting to the system as a whole) rather than element-specific. This is the region of interest for studying cognitive saturation. |
+| 5 | Overload. Performer cannot independently track all active channels. Responses become global (reacting to the system as a whole) rather than element-specific. This is the region of interest for studying cognitive saturation. |
 
-The 6-element taxonomy is well-sized for this purpose — it exceeds the expected tracking limit by 1–2 elements, which means full activation should reliably produce overload without requiring an unwieldy number of gesture categories.
+The 5-element taxonomy is well-sized for this purpose — it meets the expected tracking limit, which means full activation should push performers toward (and potentially past) the boundary of manageable complexity without requiring an unwieldy number of gesture categories.
 
 ### 3.2 Perceptual Distinguishability Is the Prerequisite
 
-The channel capacity question only applies if each element activation is experienced as a *distinct event*. If the swarm responses for elements A and D sound similar, the performer collapses them into one channel and the effective element count drops. Before studying overload, the system must demonstrate that performers can reliably identify at least 4–5 of the 6 elements by their swarm response alone. This could be tested with a simple forced-choice identification task prior to the performance study.
+The channel capacity question only applies if each element activation is experienced as a *distinct event*. If the swarm responses for elements A and D sound similar, the performer collapses them into one channel and the effective element count drops. Before studying overload, the system must demonstrate that performers can reliably identify at least 4 of the 5 elements by their swarm response alone. This could be tested with a simple forced-choice identification task prior to the performance study.
 
 ### 3.3 Observable Indicators of Saturation
 
@@ -134,8 +134,7 @@ Each element's response is designed to differ along multiple auditory dimensions
 | B (Vertical Density) | Sustained resonance | Same register | Simultaneous onset | 2.5s (long) | Held chord, quiet wash |
 | C (Transposed Shapes) | Tritone echo | +6 semitones | Sequential, fast | 0.3s | Shape preservation, harmonic shift |
 | D (Oscillation) | Phase-shifted trill | Same pitches | Alternating, offset rate | 0.15s (staccato) | Rhythmic interference |
-| E (Sweeps) | Reverse sweep | Same range | Very fast chromatic | 0.12s (percussive) | Directional opposition |
-| F (Extreme Registers) | Fill the gap | Middle register | Spaced, gentle | 1.0s | Spatial complement |
+| E (Extreme Registers) | Fill the gap | Middle register | Spaced, gentle | 1.0s | Spatial complement |
 
 These differ on the key Bregman segregation cues: **pitch register** (A, C, and F displace; B, D, E stay local), **temporal pattern** (B sustains; D and E are fast; A and C are moderate; F is slow), and **relationship to input** (each creates a unique performer-system interaction).
 
@@ -151,20 +150,18 @@ However, the swarm's response velocity is derived from the performer's input vel
 | Inverse (B) | Compensating | System fills the opposite dynamic — creates balance |
 | Direct (C) | Mirroring | 1:1 reflection — the most transparent relationship |
 | Expanded (D) | Polarizing | Quiet gets quieter, loud gets louder — heightens tension |
-| Escalating (E) | Provocative | System always responds louder — pushes toward climax |
-| Averaged (F) | Mediating | System finds the middle ground — stabilizing presence |
+| Averaged (E) | Mediating | System finds the middle ground — stabilizing presence |
 
 These dynamic behaviors add a second layer of cognitive demand: the performer must track not only *what* each element sounds like, but *how it responds to their dynamics*. This is directly relevant to the overload study — at low element counts, performers can learn and exploit these relationships; at high counts, managing multiple distinct dynamic feedback loops simultaneously should produce observable strategy collapse.
 
 ### 4.3 Predicted Interaction Dynamics
 
 When multiple elements activate simultaneously, their responses interact in musically complex ways:
-- **A + D** (mutually exclusive): Cannot co-occur, preventing confusion between linear motion and oscillation.
-- **B + E**: Dense chord triggers quiet sustained resonance while a sweep triggers a loud reverse sweep — maximally contrasting responses that should remain segregable.
-- **B + F**: Dense chords at the extremes trigger both quiet resonance (B, inverse dynamics) and gentle middle-register fill (F) — the full piano range becomes active.
-- **C + D + E** (C/E mutually exclusive): At most two can co-occur, but shape echoes at tritone intervals plus phase-shifted trills create a dense contrapuntal texture that is cognitively demanding to parse.
+- **A ↔ C** (mutually exclusive): Cannot co-occur, preventing confusion between linear motion and transposed shapes.
+- **B + E**: Dense chord triggers quiet sustained resonance while extreme registers trigger gentle middle-register fill — contrasting responses in different registers that should remain segregable.
+- **C + D**: Shape echoes at tritone intervals plus phase-shifted trills create a dense contrapuntal texture that is cognitively demanding to parse.
 
-The prediction from MOT and Cowan's literature is that performers will manage 2–3 of these interactions comfortably, begin simplifying at 4, and show clear overload behavior at 5–6 simultaneous activations.
+The prediction from MOT and Cowan's literature is that performers will manage 2–3 of these interactions comfortably, begin simplifying at 4, and show clear overload behavior at 5 simultaneous activations.
 
 ## 5. Key Sources
 

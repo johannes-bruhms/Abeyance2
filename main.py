@@ -19,7 +19,13 @@ class AbeyanceApp:
     def __init__(self):
         self.root = tk.Tk()
 
-        self.dtw          = GestaltAffinityScorer()
+        # Split-keyboard detection: two half-scorers (a-d) + one full scorer (e)
+        # sharing a single forge so training data stays in sync.
+        self.dtw_low  = GestaltAffinityScorer()                         # low half
+        self.dtw_high = GestaltAffinityScorer(forge=self.dtw_low.forge) # high half
+        self.dtw_full = GestaltAffinityScorer(forge=self.dtw_low.forge) # full (element e)
+        self._all_scorers = [self.dtw_low, self.dtw_high, self.dtw_full]
+        self._split_elements = [k for k in ELEMENTS if k != 'e']       # a, b, c, d
         self.ghost_filter = GhostNoteFilter(CONFIG['ghost_echo_ttl'])
 
         self.midi_io  = None
@@ -33,7 +39,6 @@ class AbeyanceApp:
         # Recording state
         self.recording           = False
         self.recording_element        = None
-        self.recording_frames         = []
         self.recording_frame_times    = []   # (t_start, t_end) per frame
         self.recording_raw_notes      = []   # (pitch, timestamp) events during recording
         self.recording_raw_durations  = []   # (timestamp_of_noteoff, duration) during recording
@@ -156,17 +161,27 @@ class AbeyanceApp:
 
     # --------------------------------------------------------- controller API
 
+    def panic(self):
+        """Emergency silence: cancel all pending notes and send All Notes Off."""
+        if self.playback:
+            self.playback.cancel_all()
+        if self.midi_io:
+            self.midi_io.send_all_notes_off()
+        log.warn("PANIC — All Notes Off sent")
+
     def clear_element_seed(self, el_id, variations, noise_spread):
         """Clear recorded seed data for an element and revert to default profile."""
-        self.dtw.forge.clear_seed(el_id)
-        self.dtw.update_element(el_id, int(variations), float(noise_spread))
+        self.dtw_low.forge.clear_seed(el_id)  # shared forge — clears for all
+        for scorer in self._all_scorers:
+            scorer.update_element(el_id, int(variations), float(noise_spread))
 
     def train_element(self, el_id, variations, noise_spread):
         """Re-forge synthetic data and retrain the model for one element."""
         n_vars = int(variations)
         n_spread = float(noise_spread)
-        self.dtw.update_element(el_id, n_vars, n_spread)
-        total_seed = len(self.dtw.forge.seeds.get(el_id, []))
+        for scorer in self._all_scorers:
+            scorer.update_element(el_id, n_vars, n_spread)
+        total_seed = self.dtw_low.get_seed_count(el_id)
         log.info(
             f"Trained {ELEMENTS[el_id]}: {total_seed} seed frames "
             f"→ {n_vars} synthetic variations (σ={n_spread})",
@@ -189,8 +204,9 @@ class AbeyanceApp:
                 self.completed_durations = []
             # Wire up swarm attack logging
             if self.swarm:
-                self.swarm.on_attack.clear()
-                self.swarm.on_attack.append(self._on_swarm_attack)
+                with self.swarm.lock:
+                    self.swarm.on_attack.clear()
+                    self.swarm.on_attack.append(self._on_swarm_attack)
             threading.Thread(target=self._analysis_loop, daemon=True).start()
 
     def stop_analysis(self):
@@ -221,9 +237,8 @@ class AbeyanceApp:
             'total_attacks': len(attack_snapshot),
             'config': {k: v for k, v in CONFIG.items()},
             'element_params': {k: dict(v) for k, v in ELEMENT_PARAMS.items()},
-            'profiles': {k: v.tolist() for k, v in self.dtw.profiles.items()},
-            'trained_elements': [k for k in ELEMENTS
-                                 if self.dtw.forge.seeds.get(k)],
+            'profiles': {k: v.tolist() for k, v in self.dtw_low.profiles.items()},
+            'trained_elements': self.dtw_low.get_trained_elements(),
         }
 
         # Build summary from running accumulators
@@ -240,12 +255,20 @@ class AbeyanceApp:
         ts   = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         path = os.path.join(SESSION_DIR, f'session_{ts}.json')
         try:
-            with open(path, 'w') as f:
+            tmp_path = path + '.tmp'
+            with open(tmp_path, 'w') as f:
                 json.dump(session, f, indent=2)
+            os.replace(tmp_path, path)
             ratio = f'{len(log_snapshot)}/{acc["total_hops"]}' if acc else str(len(log_snapshot))
             log.info(f'Session saved → {path}  '
                      f'({ratio} frames logged, {len(attack_snapshot)} attacks)')
             self.root.after(0, self.gui.status_var.set, f'Saved: {path}')
+            # Generate compact digest for token-efficient analysis
+            try:
+                from sessions.digest import digest_file
+                digest_file(path)
+            except Exception as e:
+                log.warn(f'Could not generate session digest: {e}')
         except Exception as e:
             log.error(f'Could not save session log: {e}', exc=True)
 
@@ -339,6 +362,9 @@ class AbeyanceApp:
             frame_id = self.current_frame_id
             self.current_frame_id += 1
 
+            # Snapshot pedal state once per hop for consistency
+            pedal_snapshot = self.pedal_state
+
             with self.lock:
                 # Prune old entries (>2× max window) to bound memory
                 cutoff = start_time - 2 * max_window_sec
@@ -352,13 +378,74 @@ class AbeyanceApp:
 
             # Split frame data: (pitch, timestamp) for gestalt, (pitch, velocity) for swarm
             notes_for_gestalt = [(n[0], n[2]) for n in all_notes]
-            notes_for_swarm   = [(n[0], n[1]) for n in all_notes
-                                 if n[2] >= start_time - max_window_sec]
             durations_for_gestalt = [(ts, d) for ts, d in all_durations]
 
-            # Per-element scoring: classifier extracts its own window per element
-            scoring = self.dtw.score_all(notes_for_gestalt, durations_for_gestalt, start_time)
-            scores = scoring['scores']
+            # Split-keyboard scoring: partition notes by split_point
+            split = CONFIG['split_point']
+            notes_low  = [(p, t) for p, t in notes_for_gestalt if p < split]
+            notes_high = [(p, t) for p, t in notes_for_gestalt if p >= split]
+            # Durations lack pitch info — pass all to both halves (articulation
+            # is a minor dimension; cross-half bleed is negligible).
+
+            swarm_notes_low  = [(n[0], n[1]) for n in all_notes
+                                if n[2] >= start_time - max_window_sec and n[0] < split]
+            swarm_notes_high = [(n[0], n[1]) for n in all_notes
+                                if n[2] >= start_time - max_window_sec and n[0] >= split]
+            swarm_notes_full = [(n[0], n[1]) for n in all_notes
+                                if n[2] >= start_time - max_window_sec]
+
+            # Score each half for elements a-d, full stream for element e
+            sc_low  = self.dtw_low.score_all(notes_low, durations_for_gestalt,
+                                             start_time, elements=self._split_elements)
+            sc_high = self.dtw_high.score_all(notes_high, durations_for_gestalt,
+                                              start_time, elements=self._split_elements)
+            sc_full = self.dtw_full.score_all(notes_for_gestalt, durations_for_gestalt,
+                                              start_time, elements=['e'])
+
+            # Merge: for a-d take the higher-confidence half; for e use full
+            scores = {}
+            raw_scores = {}
+            vectors = {}
+            suppressed = []
+            silence_gated = sc_full['silence_gated']
+            # Track which half won each element (for swarm note feeding)
+            _winning_half = {}  # element_id → 'low' | 'high' | 'full'
+
+            for el in self._split_elements:
+                s_lo = sc_low['scores'].get(el, 0.0)
+                s_hi = sc_high['scores'].get(el, 0.0)
+                if s_lo >= s_hi:
+                    scores[el] = s_lo
+                    _winning_half[el] = 'low'
+                else:
+                    scores[el] = s_hi
+                    _winning_half[el] = 'high'
+                raw_scores[el] = max(sc_low['raw_scores'].get(el, 0.0),
+                                     sc_high['raw_scores'].get(el, 0.0))
+                # Vector from winning half
+                if _winning_half[el] == 'low' and el in sc_low['vectors']:
+                    vectors[el] = sc_low['vectors'][el]
+                elif el in sc_high['vectors']:
+                    vectors[el] = sc_high['vectors'][el]
+
+            scores['e'] = sc_full['scores'].get('e', 0.0)
+            raw_scores['e'] = sc_full['raw_scores'].get('e', 0.0)
+            if 'e' in sc_full['vectors']:
+                vectors['e'] = sc_full['vectors']['e']
+            _winning_half['e'] = 'full'
+
+            suppressed = sc_low['suppressed'] + sc_high['suppressed'] + sc_full['suppressed']
+            # Deduplicate suppression (same element could be suppressed in both halves)
+            suppressed = list(set(suppressed))
+
+            # Build a scoring dict compatible with the rest of the loop
+            scoring = {
+                'scores': scores,
+                'raw_scores': raw_scores,
+                'vectors': vectors,
+                'silence_gated': silence_gated,
+                'suppressed': suppressed,
+            }
             t_rel = round(time.perf_counter() - self.session_start, 3)
 
             active = {lbl: c for lbl, c in scores.items()
@@ -384,7 +471,7 @@ class AbeyanceApp:
                     acc['overlap_hops'][(active_list[i], active_list[j])] += 1
             for el in scoring['suppressed']:
                 acc['suppression_count'][el] += 1
-            if self.pedal_state != prev_pedal:
+            if pedal_snapshot != prev_pedal:
                 acc['pedal_changes'] += 1
 
             # ---- Decide whether to log this frame ----
@@ -392,7 +479,7 @@ class AbeyanceApp:
             activated = active_set - prev_active
             deactivated = prev_active - active_set
             silence_changed = scoring['silence_gated'] != prev_silence
-            pedal_changed = self.pedal_state != prev_pedal
+            pedal_changed = pedal_snapshot != prev_pedal
             score_shifted = any(
                 abs(scores[k] - prev_scores[k]) > score_delta_threshold
                 for k in ELEMENTS)
@@ -427,7 +514,7 @@ class AbeyanceApp:
                     if scoring['suppressed']:
                         log_entry['suppressed'] = scoring['suppressed']
                     if pedal_changed:
-                        log_entry['pedal'] = self.pedal_state
+                        log_entry['pedal'] = pedal_snapshot
                 else:
                     log_entry['type'] = 'heartbeat'
 
@@ -441,17 +528,29 @@ class AbeyanceApp:
             # Update previous state for next iteration
             prev_active = active_set
             prev_silence = scoring['silence_gated']
-            prev_pedal = self.pedal_state
+            prev_pedal = pedal_snapshot
             prev_scores = {k: round(v, 3) for k, v in scores.items()}
 
             # ---- GUI + swarm (always runs, independent of logging) ----
             self.root.after(0, self.gui.push_timeline, scores)
-            self.gui.resolve_frame_visual(frame_id, active)
+            self.root.after(0, self.gui.resolve_frame_visual, frame_id, active)
+
+            # Live left-panel display: energy, active indicators, pedal
+            energy_snap = self.swarm.get_energy_snapshot() if self.swarm else {}
+            self.root.after(0, self.gui.update_live_display,
+                            active, energy_snap, pedal_snapshot)
 
             if active:
                 if self.swarm:
                     for label, confidence in active.items():
-                        self.swarm.feed(label, notes_for_swarm, weight=confidence)
+                        half = _winning_half.get(label, 'full')
+                        if half == 'low':
+                            feed_notes = swarm_notes_low
+                        elif half == 'high':
+                            feed_notes = swarm_notes_high
+                        else:
+                            feed_notes = swarm_notes_full
+                        self.swarm.feed(label, feed_notes, weight=confidence)
 
                 sorted_active = sorted(active.items(), key=lambda x: x[1], reverse=True)
                 status_msg = '  '.join(f'{ELEMENTS[l]} {c:.2f}' for l, c in sorted_active)
@@ -472,7 +571,6 @@ class AbeyanceApp:
         if not self.recording:
             self.recording                = True
             self.recording_element        = element_id
-            self.recording_frames         = []
             self.recording_frame_times    = []   # (t_start, t_end) per frame
             self.recording_raw_notes      = []
             self.recording_raw_durations  = []
@@ -481,12 +579,10 @@ class AbeyanceApp:
             return True
         else:
             self.recording = False
-            frames        = self.recording_frames
             frame_times   = self.recording_frame_times
             raw_notes     = self.recording_raw_notes
             raw_durations = self.recording_raw_durations
             target        = self.recording_element
-            self.recording_frames        = []
             self.recording_frame_times   = []
             self.recording_raw_notes     = []
             self.recording_raw_durations = []
@@ -537,8 +633,8 @@ class AbeyanceApp:
 
             if frames:
                 frame_list = [v.tolist() for v in frames]
-                self.dtw.forge.add_human_seed(target, frame_list)
-                total_seed_frames = len(self.dtw.forge.seeds.get(target, []))
+                self.dtw_low.forge.add_human_seed(target, frame_list)  # shared forge
+                total_seed_frames = self.dtw_low.get_seed_count(target)
                 strip_msg = f' ({stripped} silent frames removed)' if stripped else ''
                 log.info(
                     f"+{len(frames)} frames → {ELEMENTS[target]}{strip_msg} "

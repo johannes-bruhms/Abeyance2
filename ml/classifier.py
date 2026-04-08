@@ -27,23 +27,29 @@ class GestaltAffinityScorer:
       5. Return the full {element_id: confidence} dict — all values, not just winners.
     """
 
-    def __init__(self):
-        self.forge = GestureForge()
-        self.templates = {}    # time-series templates (kept for potential future use)
+    def __init__(self, forge=None):
+        self.forge = forge or GestureForge()
         self.profiles = {}     # (8,) feature profile per element — the affinity target
         self._ema = {k: 0.0 for k in ELEMENTS}
         self._last_vectors = {}  # populated by _score_affinity for diagnostics
 
         self.load_all_from_forge()
 
+    def get_seed_count(self, element_id):
+        """Return the number of seed frames for an element."""
+        return len(self.forge.seeds.get(element_id, []))
+
+    def get_trained_elements(self):
+        """Return list of element IDs that have recorded seed data."""
+        return [k for k in ELEMENTS if self.forge.seeds.get(k)]
+
     def load_all_from_forge(self):
         for el_id in ELEMENTS:
             self.update_element(el_id, CONFIG['variations'], CONFIG['noise_spread'])
 
     def update_element(self, element_id, num_vars, spread):
-        """Re-forge templates and recompute the affinity profile for one element."""
+        """Re-forge synthetic variations and recompute the affinity profile for one element."""
         templates = self.forge.forge_variations(element_id, int(num_vars), spread)
-        self.templates[element_id] = templates
 
         if self.forge.seeds.get(element_id):
             # Human seed recorded — derive profile as mean over all frames x all variations
@@ -53,9 +59,10 @@ class GestaltAffinityScorer:
             # No training data yet — use the musically-informed hardcoded default
             self.profiles[element_id] = np.array(DEFAULT_CENTROIDS[element_id], dtype=float)
 
-    def score_all(self, notes_with_times=None, completed_durations=None, current_time=None):
+    def score_all(self, notes_with_times=None, completed_durations=None,
+                  current_time=None, elements=None):
         """
-        Score all elements against their per-element time windows of raw MIDI data.
+        Score elements against their per-element time windows of raw MIDI data.
 
         Args:
             notes_with_times: list of (pitch, timestamp) tuples, covering at least
@@ -63,6 +70,9 @@ class GestaltAffinityScorer:
                               push_frame-style usage (returns current EMA state).
             completed_durations: list of (timestamp_of_noteoff, duration) tuples.
             current_time: float, the current timestamp for windowing.
+            elements: optional list of element IDs to score. If None, scores all.
+                      Only listed elements have their EMA updated; others are left
+                      unchanged in the returned scores dict.
 
         Returns:
             dict with keys:
@@ -72,8 +82,10 @@ class GestaltAffinityScorer:
                 'silence_gated': bool — True if the silence gate fired this hop
                 'suppressed': list[str] — element IDs suppressed by mutual exclusion
         """
+        score_set = set(elements) if elements else set(self.profiles.keys())
+
         result = {
-            'scores': dict(self._ema),
+            'scores': {k: self._ema[k] for k in score_set},
             'raw_scores': {},
             'vectors': {},
             'silence_gated': False,
@@ -87,9 +99,9 @@ class GestaltAffinityScorer:
         one_sec_ago = current_time - 1.0
         recent_notes = [n for n in notes_with_times if n[1] >= one_sec_ago]
         if len(recent_notes) < 2:
-            for label in self._ema:
+            for label in score_set:
                 self._ema[label] *= 0.50
-            result['scores'] = dict(self._ema)
+            result['scores'] = {k: self._ema[k] for k in score_set}
             result['silence_gated'] = True
             return result
 
@@ -97,7 +109,8 @@ class GestaltAffinityScorer:
 
         # Compute raw score for each element using its own window and scoring mode
         raw = {}
-        for label, profile in self.profiles.items():
+        for label in score_set:
+            profile = self.profiles[label]
             params = ELEMENT_PARAMS[label]
             scoring_mode = params.get('scoring_mode', 'affinity')
 
@@ -108,14 +121,15 @@ class GestaltAffinityScorer:
                                                   current_time, label, profile)
 
         result['raw_scores'] = dict(raw)
-        result['vectors'] = {k: v.tolist() for k, v in self._last_vectors.items()}
+        result['vectors'] = {k: v.tolist() for k, v in self._last_vectors.items()
+                             if k in score_set}
 
         # Apply per-element EMA smoothing
         for label, score in raw.items():
             alpha = EMA_ALPHAS[label]
             self._ema[label] = alpha * score + (1.0 - alpha) * self._ema[label]
 
-        scores = dict(self._ema)
+        scores = {k: self._ema[k] for k in score_set}
 
         # Mutual exclusion: suppress the lower-confidence partner in contradictory pairs.
         # Decay the suppressed element's EMA directly to prevent hidden accumulation

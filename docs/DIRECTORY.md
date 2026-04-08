@@ -8,6 +8,15 @@ abeyance2/
 ├── CLAUDE.md                  # Claude Code project instructions, classifier tuning rationale
 ├── .gitignore
 │
+├── .claude/
+│   ├── settings.json
+│   └── agents/
+│       ├── session-analyst.md     # Post-performance session log analysis
+│       ├── gesture-tuner.md       # ML classifier tuning and diagnostics
+│       ├── midi-debugger.md       # MIDI I/O, ghost filter, stuck notes
+│       ├── swarm-designer.md      # Parasite swarm attack behavior design
+│       └── thesis-advisor.md      # Cognitive science framing and methodology
+│
 ├── core/
 │   ├── __init__.py
 │   ├── config.py              # All tuning constants, 5-element taxonomy (a–e), centroids, weights
@@ -44,21 +53,34 @@ abeyance2/
 ├── tests/
 │   ├── __init__.py
 │   ├── test_gestalt.py        # Unit tests for 8D gestalt extraction
-│   └── test_classifier.py     # Unit tests for affinity scorer, mutual exclusion, dynamic mappings
+│   ├── test_classifier.py     # Unit tests for affinity scorer, mutual exclusion, dynamic mappings
+│   ├── test_forge.py          # Unit tests for GestureForge seed persistence and migration
+│   ├── test_ghost_filter.py   # Unit tests for GhostNoteFilter echo suppression
+│   ├── test_parasite.py       # Unit tests for ParasiteSwarm attacks, energy, dynamic mappings
+│   └── test_playback.py       # Unit tests for PlaybackEngine scheduling and cancel
 │
-├── sessions/                  # Session logs (auto-created, gitignored)
+├── sessions/                  # Session logs (auto-created, JSON data gitignored)
+│   └── digest.py              # Generates compact .digest.json files (~5% of full size)
+│
+├── archived/                  # Archived/deprecated code (gitignored)
 │
 └── docs/
+    ├── AUDIT.md                # Comprehensive project audit with prioritized fixes
     ├── DIRECTORY.md            # This file
     └── RESEARCH_NOTES.md       # Cognitive overload theoretical framework (Miller, Cowan,
-                                #   Pylyshyn, Wickens, Bregman)
+                                #   Pylyshkin, Wickens, Bregman)
 ```
 
 ## Signal Flow
 
 ```
-[Disklavier MIDI In] → GhostNoteFilter → Note Buffer → per-element 8D Gestalt
-  → Affinity Scorer (per-element windows + EMA) → ParasiteSwarm → PlaybackEngine → [Disklavier MIDI Out]
+[Disklavier MIDI In] → GhostNoteFilter → Note Buffer
+  → Split by pitch (low / high halves at middle C)
+  → per-half 8D Gestalt extraction
+  → Affinity Scorer ×2 (elements a–d per half) + full-stream scorer (element e)
+  → Merge (max confidence per element)
+  → ParasiteSwarm (fed with winning-half notes)
+  → PlaybackEngine → [Disklavier MIDI Out]
 ```
 
-CC 64 (sustain pedal) bypasses classification → routes directly to swarm octave transposition.
+CC 64 (sustain pedal) bypasses classification → routes directly to swarm octave transposition (+12 semitones).

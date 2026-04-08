@@ -17,20 +17,20 @@ CONFIG = {
     'polyphony_threshold_ms': 15,   # Max inter-onset gap (ms) to count as simultaneous
     'density_max_notes': 25,        # Max note-on count per frame for density normalization
     'piano_keys': 88,               # Number of keys for spread/velocity normalization
-    # Classifier silence gate
-    'silence_density_gate': 0.02,   # Density below this = silence (no scoring)
     # Piano roll
     'roll_scroll_px': 4,            # Pixels per animation tick the roll scrolls left
+    # Split-keyboard pseudo-polyphonic detection
+    'split_point': 60,              # MIDI note dividing low/high halves (60 = middle C)
 }
 
 # Per-element tunable model parameters.
 # Each element can be tuned independently via the GUI Elements tab.
 ELEMENT_PARAMS = {
-    'a': {'frame_size_ms': 250, 'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'b': {'frame_size_ms': 150, 'scoring_mode': 'chord', 'chord_min_notes': 3, 'chord_onset_ms': 30, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'c': {'frame_size_ms': 600, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'd': {'frame_size_ms': 500, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
-    'e': {'frame_size_ms': 350, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05},
+    'a': {'frame_size_ms': 250, 'affinity_threshold': 0.40, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05, 'energy_drain': 0.30},
+    'b': {'frame_size_ms': 150, 'scoring_mode': 'chord', 'chord_min_notes': 3, 'chord_onset_ms': 30, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05, 'energy_drain': 0.40},
+    'c': {'frame_size_ms': 600, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05, 'energy_drain': 0.30},
+    'd': {'frame_size_ms': 500, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05, 'energy_drain': 0.35},
+    'e': {'frame_size_ms': 350, 'affinity_threshold': 0.35, 'affinity_sigma': 0.18, 'energy_boost': 0.10, 'energy_decay': 0.05, 'energy_drain': 0.40},
 }
 
 ELEMENTS = {

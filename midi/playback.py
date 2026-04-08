@@ -6,22 +6,27 @@ class PlaybackEngine:
     def __init__(self, midi_io):
         self.midi_io = midi_io
         self._timers = []
+        self._active_notes = set()  # pitches with note_on sent but no note_off yet
         self._lock = threading.Lock()
         self.on_note_scheduled = []  # list of fn(note, velocity, duration_sec, delay_sec)
 
     def schedule_note(self, note, velocity, duration_sec, delay_sec=0.0):
-        # Clamp note to valid MIDI range (0-127)
+        # Clamp to valid MIDI range; velocity min=1 to avoid note_off semantics
         safe_note = max(0, min(127, int(note)))
-        safe_velocity = max(0, min(127, int(velocity)))
+        safe_velocity = max(1, min(127, int(velocity)))
 
         for cb in self.on_note_scheduled:
             cb(safe_note, safe_velocity, duration_sec, delay_sec)
 
         def _play_task():
-            self.midi_io.send_note_on(safe_note, safe_velocity)
-            off_timer = threading.Timer(duration_sec, self.midi_io.send_note_off, args=[safe_note])
+            # Track the off_timer under the lock *before* starting it,
+            # so cancel_all() can never miss it.
+            off_timer = threading.Timer(duration_sec, self._send_off, args=[safe_note])
             off_timer.daemon = True
-            self._track(off_timer)
+            with self._lock:
+                self._active_notes.add(safe_note)
+                self._timers.append(off_timer)
+            self.midi_io.send_note_on(safe_note, safe_velocity)
             off_timer.start()
 
         if delay_sec > 0:
@@ -32,12 +37,23 @@ class PlaybackEngine:
         else:
             _play_task()
 
+    def _send_off(self, note):
+        """Send note_off and remove from active set."""
+        with self._lock:
+            self._active_notes.discard(note)
+        self.midi_io.send_note_off(note)
+
     def cancel_all(self):
-        """Cancel all pending timers — silences the swarm immediately."""
+        """Cancel all pending timers and silence any sounding notes."""
         with self._lock:
             for t in self._timers:
                 t.cancel()
             self._timers.clear()
+            stuck = list(self._active_notes)
+            self._active_notes.clear()
+        # Send note_off outside the lock for any notes that were sounding
+        for note in stuck:
+            self.midi_io.send_note_off(note)
 
     def _track(self, timer):
         with self._lock:

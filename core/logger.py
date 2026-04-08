@@ -34,7 +34,8 @@ class AbeyanceLogger:
         if os.path.exists(self.log_file):
             try:
                 if os.path.getsize(self.log_file) > 1_000_000:
-                    open(self.log_file, 'w').close()
+                    with open(self.log_file, 'w'):
+                        pass
             except OSError:
                 pass
 
